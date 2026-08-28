@@ -28,3 +28,7 @@ colorama==0.4.6
 
 # telnyx SDK (for non-HTTP control actions)
 telnyx==4.170.0
+
+# Appwrite (optional — BaaS for auth/DB/realtime). Used by backend/appwrite/.
+# Install with: pip install 'appwrite==1.6.0'
+# appwrite==1.6.0

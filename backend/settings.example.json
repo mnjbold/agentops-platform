@@ -1,0 +1,10 @@
+{
+  "_comment": "Real Appwrite credentials for the agentops backend. Copy to backend/settings.json (git-ignored) and fill in. DO NOT commit the real file.",
+  "_format_note": "The 'env' block is loosely formatted k=v strings (not strict JSON) to match the convention used by your other projects.",
+  "env": {
+    "APPWRITE_API_KEY=standard_<your-key-here>",
+    "APPWRITE_DEV_API_KEY=dev_<your-key-here>",
+    "APPWRITE_PROJECT_ID=<your-project-id>",
+    "APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1"
+  }
+}

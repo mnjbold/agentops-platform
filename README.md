@@ -131,6 +131,7 @@ Auto-deploy is wired via a GitHub webhook pointing to
 | Real-time WS push to browser | ✅ in production |
 | Inbound AI agent routing | ✅ 36 assistants, 14 call-control apps |
 | Outbound without AI interception | ✅ clean line (+1 507 873 1084) |
+| Appwrite BaaS integration | 🟡 client + sample function in place, endpoint not yet live |
 | Telnyx AgentSDK / StatefulActor | ⏸️ deferred — Beta, requires telnyx CLI |
 
 ---

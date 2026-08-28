@@ -38,13 +38,16 @@ If you're an AI agent picking up work in this repo, read this first.
 
 - **Don't introduce a build step to the frontend** (Vite, Webpack, esbuild, etc.).
   The single-file HTML + Tailwind CDN is the architecture; don't fight it.
-- **Don't add a database server.** SQLite per tenant is the design.
+- **Don't add a database server.** SQLite per tenant is the design. (Appwrite
+  is opt-in; see `backend/appwrite/`. Don't add a Postgres server unless we
+  need cross-tenant analytics that SQLite can't deliver.)
 - **Don't bypass the webhook handler.** Every Telnyx event goes through
   `webhooks/handlers/base.py:WebhookContext` and a typed handler in `handlers/`.
   Don't add a parallel path.
 - **Don't use the `.env` file as a config store.** It's for secrets only.
   Anything non-secret belongs in the code or a per-tenant DB row.
 - **Don't put a real `.env` in the repo.** Use `.env.example` and readme it.
+- **Don't put a real `settings.json` in the repo.** It's git-ignored.
 
 ## Key code paths
 

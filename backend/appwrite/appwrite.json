@@ -1,0 +1,20 @@
+{
+  "projectId": "<your-appwrite-project-id>",
+  "projectName": "agentops",
+  "functions": [
+    {
+      "$id": "telnyx-webhook",
+      "name": "telnyx-webhook",
+      "runtime": "python-3.12",
+      "path": "functions/telnyx_webhook.py",
+      "entrypoint": "main",
+      "events": [],
+      "schedule": "",
+      "timeout": 30,
+      "permissions": {
+        "read": ["any"],
+        "write": ["any"]
+      }
+    }
+  ]
+}

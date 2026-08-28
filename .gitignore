@@ -5,6 +5,10 @@
 *.log
 secrets/
 
+# Appwrite credentials (real secret-bearing JSON, see settings.example.json)
+**/settings.json
+**/settings.local.json
+
 # SIP credentials (real secret-bearing JSON, see scripts/sip_credentials.example.json)
 **/sip_credentials.json
 **/sip_credentials*.local.json

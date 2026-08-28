@@ -116,6 +116,35 @@ campaigns need a "clean" line with no AI. We auto-purchased
 `+1 507 873 1084` (Minnesota) for this and created a new call control app
 "Clean Line" with no assistant attached.
 
+### D11 — Appwrite as a future BaaS (in progress, opt-in)
+**Why:** Appwrite gives us auth, database, realtime subscriptions, file storage,
+and serverless functions in one service. For multi-tenant SaaS, that's a lot
+of code we don't have to write.
+
+**Where it lives today:** `backend/appwrite/` has a client wrapper
+(`client.py`) and a sample Telnyx-webhook Appwrite Function
+(`functions/telnyx_webhook.py`). Settings come from `backend/settings.json`
+(git-ignored) or env vars.
+
+**Status:** code is in place but the user's settings.json endpoint
+(`appwrite-zqdwqegsm8folqrsjom9kjs7.169.58.147.169.sslip.io/v1`) doesn't
+resolve to a live Appwrite instance — returns 404 from a Coolify proxy
+host. The integration will work as soon as a reachable endpoint + valid
+project_id are configured.
+
+**Migration strategy (recommended):** keep the FastAPI webhook server
+for the Telnyx-specific glue (which Appwrite Functions can't easily
+replace — the timing, control actions, recording polling), but use
+Appwrite for everything else:
+- `Appwrite Auth` → replaces the simple session token
+- `Appwrite Database` → replaces `webhooks/storage.py` (SQLite per tenant)
+- `Appwrite Realtime` → replaces the in-process WS broker
+- `Appwrite Storage` → for recording audio files
+- `Appwrite Functions` → optional, for the webhook receiver
+
+The hybrid keeps us out of Appwrite cold-start latency for the hot path
+(Telnyx events) while offloading the boring CRUD to a managed service.
+
 ### D9 — Telnyx SDK v4 for control actions, httpx for everything else
 **Why:** the Telnyx SDK is more idiomatic for things like `client.calls.create`
 and `client.numbers.list`. But it doesn't expose call control actions like
