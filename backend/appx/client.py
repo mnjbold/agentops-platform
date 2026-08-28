@@ -4,9 +4,9 @@ Loads credentials from `settings.json` (git-ignored) or env vars, and exposes
 typed helpers for the most common operations.
 
 Usage:
-    from appwrite.client import get_appwrite
+    from appx.client import get_appwrite
     aw = get_appwrite()
-    print(aw.projects.list_databases())
+    print(aw.databases.list_documents(...))
 
 The full Appwrite Python SDK reference is at:
     https://appwrite.io/docs/references/cloud/server-python
@@ -102,7 +102,7 @@ def get_appwrite():
         from appwrite.services.users import Users
     except ImportError as e:
         raise RuntimeError(
-            "appwrite SDK not installed. Run: pip install appwrite"
+            "appwrite SDK not installed. Run: pip install 'appwrite>=14,<15'"
         ) from e
 
     client = AwClient()
@@ -115,7 +115,7 @@ def get_appwrite():
 
 
 class _Wrap:
-    """Thin namespace so callers do `aw.databases.list()` / `aw.users.list()`."""
+    """Thin namespace so callers do `aw.databases.list_documents(...)` etc."""
 
     def __init__(self, client):
         from appwrite.services.account import Account
@@ -138,9 +138,15 @@ def health() -> dict[str, Any]:
         _, project_id, endpoint = _load_credentials()
         if not all([project_id, endpoint]):
             return {"configured": False, "status": "missing-creds"}
-        from appwrite.services.projects import Projects
-        c = get_appwrite().client
-        Projects(c).get(project_id)
+        from appwrite.services.databases import Databases
+        client = get_appwrite().client
+        # A 404 (database not found) still proves auth+endpoint are reachable.
+        try:
+            Databases(client).list_collections(database_id="agentops")
+        except Exception as e:
+            msg = str(e).lower()
+            if "404" not in msg and "not found" not in msg:
+                raise
         return {"configured": True, "status": "ok", "project_id": project_id, "endpoint": endpoint}
     except Exception as e:
         return {"configured": True, "status": "error", "error": str(e)[:200]}

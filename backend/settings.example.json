@@ -5,6 +5,6 @@
     "APPWRITE_API_KEY=standard_<your-key-here>",
     "APPWRITE_DEV_API_KEY=dev_<your-key-here>",
     "APPWRITE_PROJECT_ID=<your-project-id>",
-    "APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1"
+    "APPWRITE_ENDPOINT=https://appwrite.getbijou.xyz/v1"
   }
 }

@@ -48,6 +48,7 @@ Thumbs.db
 
 # ---- staging dirs (move-out leftovers) ----
 **/w3j-bijou-delete-me/
+**/appwrite-delete-me/
 **/.trash/
 
 # ---- temp worktrees ----
