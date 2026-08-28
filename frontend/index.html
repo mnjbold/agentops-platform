@@ -281,7 +281,7 @@
         </div>
         <div>
           <h1 class="text-xl font-bold">agentops</h1>
-          <p class="text-xs text-gray-500 mono">v0.4.6 · agent console · Telnyx WebRTC + Appwrite</p>
+          <p class="text-xs text-gray-500 mono">v0.4.7 · agent console · Telnyx WebRTC + Appwrite</p>
         </div>
       </div>
       <h2 class="text-2xl font-bold mb-1">Sign in</h2>
@@ -316,7 +316,7 @@
           </div>
           <div class="min-w-0">
             <h1 class="text-base font-bold truncate">agentops</h1>
-            <p class="text-[10px] text-gray-500 mono truncate">v0.4.6 · <span id="user-label">agent</span></p>
+            <p class="text-[10px] text-gray-500 mono truncate">v0.4.7 · <span id="user-label">agent</span></p>
           </div>
           <!-- status pill: visible on mobile, hidden on very small (where space is precious) -->
           <span class="ml-2 sm:ml-3 pill pill-on shrink-0" id="status-pill"><span class="dot dot-on" id="status-dot"></span> <span id="status-text" class="hidden xs:inline">Ready</span></span>
@@ -366,7 +366,7 @@
         </div>
         <button class="btn btn-ghost justify-start text-left" onclick="openSettings(); toggleHeaderMenu();">⚙️  Settings</button>
         <button class="btn btn-ghost justify-start text-left" onclick="logout(); toggleHeaderMenu();">⎋  Sign out</button>
-        <div class="mt-auto text-[10px] text-gray-500 mono">v0.4.6 · <span id="user-label-sheet">agent</span></div>
+        <div class="mt-auto text-[10px] text-gray-500 mono">v0.4.7 · <span id="user-label-sheet">agent</span></div>
       </div>
     </div>
 
@@ -1068,7 +1068,7 @@
       try {
         const s = JSON.parse(localStorage.getItem('w3j_softphone_settings') || '{}');
         settings = { ...settings, ...s };
-        document.getElementById('caller-number').value = settings.caller || '+13079999692';
+        document.getElementById('caller-number').value = settings.caller || '+15078731084';
         document.getElementById('settings-login').value = settings.login || '';
         document.getElementById('settings-password').value = settings.password || '';
         document.getElementById('settings-caller').value = settings.caller || '+13079999692';
@@ -1266,34 +1266,86 @@
     // ============================================================
     // CALL ACTIONS
     // ============================================================
+    // OUTBOUND CALL FLOW
+    // We hit /api/dial (server creates the call via Telnyx REST API) instead of
+    // telnyxClient.newCall(), because:
+    //   1. The dropdown's "From" number must actually be honored (WebRTC's
+    //      newCall() always dials from the WebRTC credential's number)
+    //   2. The server call routes through the agent's outbound line
+    //      (+15078731084 clean line) and bypasses the AI assistants on the
+    //      other 3 numbers
+    //   3. Works even if the WebRTC SDK isn't ready yet (the destination
+    //      phone still rings)
+    // After the server creates the call, Telnyx ALSO rings the WebRTC
+    // client (since the call control app is wired to the same connection).
+    // The softphone auto-answers that leg via the `pendingOutboundCall`
+    // flag the wrapper at the bottom of this file watches for.
+    let pendingOutboundCall = null;  // { number, caller, startedAt }
+
     function placeCall() {
       const number = document.getElementById('number-input').value.trim();
       if (!number) { alert('Enter a number'); return; }
       const caller = document.getElementById('caller-number').value;
-      if (!telnyxClient) {
-        alert('Telnyx WebRTC not connected. Click Settings â†’ add credentials â†’ Test connection.');
-        return;
-      }
       try {
         fsm.fire('dial');
         view.setStatus(fsm.state);
         view.showCallCard(number, 'Outgoing call');
-        view.setCallState('Dialingâ€¦');
-        telnyxClient.newCall({
-          destinationNumber: number,
-          callerNumber: caller,
+        view.setCallState('Dialing\u2026');
+        pendingOutboundCall = {
+          number: number,
+          caller: caller,
+          startedAt: Date.now(),
+        };
+        // Server-side dial. The server picks the connection_id for the
+        // from number, sets the webhook, and creates the call. The call
+        // returns a call_control_id; we don't need it on the client but
+        // we log it for debugging.
+        fetch('https://bk-jr-api.aixlabs.fun/api/dial', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'default' },
+          body: JSON.stringify({ to: number, from: caller }),
+        }).then(r => r.json()).then(j => {
+          if (j.status && j.status >= 400) {
+            const body = j.body || {};
+            const err = (body.errors && body.errors[0] && body.errors[0].title) || ('HTTP ' + j.status);
+            throw new Error(err);
+          }
+          const cci = (j.body && j.body.data && j.body.data.call_control_id) || '';
+          console.log('Outbound call created via /api/dial, cci=', cci, 'json=', j);
+          if (pendingOutboundCall) pendingOutboundCall.call_control_id = cci;
+        }).catch((e) => {
+          console.error('Place call failed:', e);
+          showToast({ kind: 'error', icon: '\u26a0\ufe0f', title: 'Call failed', message: e.message, durationMs: 4000 });
+          try { if (fsm.state !== 'Ready') fsm.fire('remoteHangup'); } catch (err) {}
+          view.setStatus(fsm.state);
+          view.showDialer();
+          pendingOutboundCall = null;
         });
       } catch (e) {
         console.error('Place call failed:', e);
-        fsm.fire('remoteHangup');
+        showToast({ kind: 'error', icon: '\u26a0\ufe0f', title: 'Call failed', message: e.message, durationMs: 4000 });
+        try { fsm.fire('remoteHangup'); } catch (err) {}
         view.setStatus(fsm.state);
         view.showDialer();
+        pendingOutboundCall = null;
       }
     }
 
     function hangupCall() {
       try {
-        if (activeCall) activeCall.hangup();
+        // Always tell the server to hang up — this is the only path that
+        // actually closes the call on Telnyx's side. The WebRTC
+        // `activeCall.hangup()` is best-effort.
+        const cci = activeCall && (activeCall.parameters?.CallControlId || activeCall.id);
+        if (cci) {
+          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/hangup`, {
+            method: 'POST', headers: { 'X-Tenant-Id': 'default' },
+          }).catch((e) => console.warn('server-side hangup failed', e));
+        }
+        if (activeCall) {
+          try { activeCall.hangup(); } catch (e) { console.warn('SDK hangup() failed', e); }
+        }
+        pendingOutboundCall = null;
         fsm.fire('localHangup');
         view.setStatus(fsm.state);
         view.showDialer();
@@ -2137,7 +2189,12 @@
       // If the call object is already here, answer immediately. If not,
       // set a flag so the SDK notification handler answers as soon as
       // it arrives.
-      if (activeCall && activeCall.state === 'ringing') {
+      const callState = activeCall && activeCall.state;
+      const isAnswerable = activeCall && (
+        callState === 'ringing' || callState === 'new' || callState === 'trying' ||
+        callState === 'early' || callState === 'active' || callState === 'confirmed'
+      );
+      if (isAnswerable) {
         try { activeCall.answer(); }
         catch (e) { console.error('answer() failed', e); }
         fsm.fire('incomingCall');
@@ -2155,6 +2212,16 @@
         // v0.4.2: refresh the persistent call bar to show "On call"
         try { updateCallBar(); } catch (e) {}
       } else {
+        // Belt-and-suspenders: also tell the server to answer so the
+        // caller hears a "connected" tone even if the browser WebRTC
+        // never delivers the call. Stops Telnyx's ringing so the call
+        // doesn't get auto-rejected by the AMD timeout.
+        const cciServer = pendingIncomingCall && pendingIncomingCall.call_control_id;
+        if (cciServer) {
+          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cciServer)}/answer`, {
+            method: 'POST', headers: { 'X-Tenant-Id': 'default' },
+          }).catch((e) => console.warn('server-side answer failed', e));
+        }
         pendingAccept = true;
         // The modal stays open until the SDK call arrives. Give it a
         // 10s grace window â€” if the call never shows, close.
@@ -2351,6 +2418,23 @@
     handleTelnyxNotification = function(n) {
       if (n.type === 'callUpdate' && n.call) {
         const call = n.call;
+        // Auto-answer the WebRTC leg when the user just initiated an
+        // outbound call via /api/dial. The server creates the call from
+        // +15078731084, Telnyx then rings the destination AND the WebRTC
+        // client (since the call control app is wired to the WebRTC
+        // credential). We must auto-answer that leg or the audio path
+        // stays closed.
+        if (call.state === 'ringing' && pendingOutboundCall) {
+          const ob = pendingOutboundCall;
+          pendingOutboundCall = null;
+          try { call.answer(); } catch (e) { console.error('outbound auto-answer failed', e); }
+          activeCall = call;
+          fsm.fire('remoteAnswer');
+          view.setStatus(fsm.state);
+          view.setCallState('Answered');
+          showToast({ kind: 'info', icon: '📞', title: 'Call connected', message: 'Ringing ' + ob.number, durationMs: 3000 });
+          return;
+        }
         if (call.state === 'ringing' && pendingAccept) {
           // User clicked Accept in the modal before the SDK notified us.
           // Answer immediately.
@@ -2363,13 +2447,13 @@
           view.showCallCard(remote, 'Incoming call');
           view.setCallState('Answered');
           hideIncomingModal();
-          showToast({ kind: 'info', icon: 'ðŸ“ž', title: 'Call accepted', message: 'Connected to ' + remote, durationMs: 3000 });
+          showToast({ kind: 'info', icon: '📞', title: 'Call accepted', message: 'Connected to ' + remote, durationMs: 3000 });
           return;
         }
         // If we got a ringing notification without a pending modal, show one
         // (covers the case where Telnyx's SIP INVITE arrives before the
-        // server-side webhook does â€” usually only happens on self-loopback).
-        if (call.state === 'ringing' && !pendingIncomingCall) {
+        // server-side webhook does — usually only happens on self-loopback).
+        if (call.state === 'ringing' && !pendingIncomingCall && !pendingOutboundCall) {
           const remote = call.options?.remoteCallerNumber || call.parameters?.From || 'Unknown';
           showIncomingModal({ from: remote, call_control_id: call.parameters?.CallUUID || call.id || null });
         }
