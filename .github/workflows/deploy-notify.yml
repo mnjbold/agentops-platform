@@ -1,0 +1,25 @@
+name: Deploy Notify
+
+# Runs after a push to main. Coolify already has its own webhook that
+# triggers the actual build, so this workflow just posts a status comment
+# / log line so the team has a record in GitHub Actions history.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    name: Log deploy trigger
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record deploy trigger
+        env:
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          AUTHOR: ${{ github.actor }}
+        run: |
+          echo "::notice title=Coolify deploy triggered::sha=$SHA ref=$REF author=$AUTHOR"
+          echo "Coolify is building the frontend from /frontend/Dockerfile."
+          echo "Live URL: https://agentops.getbijou.xyz (1-3 min after this push)"

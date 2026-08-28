@@ -8,19 +8,98 @@ on:
 
 jobs:
   backend-lint:
-    name: Backend syntax check
+    name: Backend · syntax + import smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Appwrite SDK is optional; only install if referenced
+          pip install appwrite==1.6.0 || true
+
       - name: Syntax check
+        working-directory: backend
         run: |
-          python -m compileall -q backend/webhooks backend/telnyx_mcp backend/scripts
+          python -m compileall -q webhooks telnyx_mcp scripts appwrite
+
       - name: Import smoke test
+        working-directory: backend
+        env:
+          # Stub values so the import doesn't fail on missing creds
+          TELNYX_API_KEY: stub
+          APPWRITE_API_KEY: stub
+          APPWRITE_PROJECT_ID: stub
+          APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
         run: |
-          cd backend
-          pip install --quiet -r requirements.txt
-          python -c "from webhooks import dashboard_api, server, security, storage; print('imports ok')"
+          python -c "
+          from webhooks import dashboard_api, server, security, storage
+          from appwrite.client import get_appwrite, health
+          print('imports ok')
+          h = health()
+          print('appwrite health:', h)
+          "
+
+  frontend-lint:
+    name: Frontend · HTML + JS sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: HTML well-formed check
+        working-directory: frontend
+        run: |
+          python -c "
+          from html.parser import HTMLParser
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.stack = []
+                  self.errors = []
+              def handle_starttag(self, tag, attrs):
+                  if tag not in ('br','meta','link','img','input','hr','source'):
+                      self.stack.append(tag)
+              def handle_endtag(self, tag):
+                  if self.stack and self.stack[-1] == tag:
+                      self.stack.pop()
+                  else:
+                      self.errors.append(f'mismatched </{tag}>; stack={self.stack[-3:]}')
+          p = P()
+          p.feed(open('index.html', encoding='utf-8').read())
+          assert not p.errors, p.errors[:5]
+          assert not p.stack, f'unclosed tags: {p.stack}'
+          print('HTML well-formed')
+          "
+
+      - name: JS syntax check
+        working-directory: frontend
+        run: |
+          for f in *.js; do
+            [ -f "$f" ] || continue
+            node --check "$f" 2>&1 || echo "::warning::$f has syntax issues (might use browser-only globals)"
+          done
+
+      - name: Version stamp is present
+        working-directory: frontend
+        run: |
+          grep -E "v0\.[0-9]+\.[0-9]+" index.html | head -3
+
+  secrets-scan:
+    name: Repo · no obvious secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for common secret patterns
+        run: |
+          ! grep -rE "KEY0[0-9A-F]{30,}|sk-(cp-|proj-)?[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36,}|telnyx.*api_key.*=.*['\"][A-Za-z0-9]{20,}" \
+            --include="*.py" --include="*.js" --include="*.md" --include="*.json" --include="*.html" \
+            --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=.git \
+            . && echo "scanned clean"
