@@ -96,16 +96,67 @@ COLLECTIONS = [
             {"key": "idx_run_at_status", "type": "key", "attributes": ["run_at", "status"]},
         ],
     },
+    {
+        "collectionId": "calls",
+        "name": "agentops call history (inbound + outbound)",
+        "attributes": [
+            {"key": "tenant_id", "type": "string", "size": 64, "required": True},
+            {"key": "call_control_id", "type": "string", "size": 128, "required": True},
+            {"key": "direction", "type": "string", "size": 16, "required": True},  # inbound|outbound
+            {"key": "from_number", "type": "string", "size": 32, "required": True},
+            {"key": "to_number", "type": "string", "size": 32, "required": True},
+            {"key": "from_name", "type": "string", "size": 128, "required": False},
+            {"key": "to_name", "type": "string", "size": 128, "required": False},
+            {"key": "status", "type": "string", "size": 32, "required": True},
+            {"key": "started_at", "type": "datetime", "required": True},
+            {"key": "answered_at", "type": "datetime", "required": False},
+            {"key": "ended_at", "type": "datetime", "required": False},
+            {"key": "duration_seconds", "type": "integer", "required": False},
+            {"key": "has_recording", "type": "boolean", "required": False},
+            {"key": "recording_url", "type": "string", "size": 1024, "required": False},
+            {"key": "assistant_id", "type": "string", "size": 64, "required": False},
+        ],
+        "indexes": [
+            {"key": "idx_cci", "type": "unique", "attributes": ["call_control_id"]},
+            {"key": "idx_tenant_started", "type": "key", "attributes": ["tenant_id", "started_at"]},
+            {"key": "idx_tenant_direction", "type": "key", "attributes": ["tenant_id", "direction"]},
+        ],
+    },
+    {
+        "collectionId": "messages",
+        "name": "agentops SMS/MMS history (inbound + outbound)",
+        "attributes": [
+            {"key": "tenant_id", "type": "string", "size": 64, "required": True},
+            {"key": "message_id", "type": "string", "size": 128, "required": True},
+            {"key": "direction", "type": "string", "size": 16, "required": True},  # inbound|outbound
+            {"key": "from_number", "type": "string", "size": 32, "required": True},
+            {"key": "to_number", "type": "string", "size": 32, "required": True},
+            {"key": "body", "type": "string", "size": 4096, "required": False},
+            {"key": "media_urls", "type": "string", "size": 4096, "required": False, "array": True},
+            {"key": "status", "type": "string", "size": 32, "required": True},
+            {"key": "sent_at", "type": "datetime", "required": False},
+            {"key": "received_at", "type": "datetime", "required": False},
+        ],
+        "indexes": [
+            {"key": "idx_message_id", "type": "unique", "attributes": ["message_id"]},
+            {"key": "idx_tenant_received", "type": "key", "attributes": ["tenant_id", "received_at"]},
+            {"key": "idx_from_to", "type": "key", "attributes": ["from_number", "to_number"]},
+        ],
+    },
 ]
 
 
 def run() -> int:
     aw = get_appwrite()
     client = aw.client
+    # In Appwrite SDK 14.x, services are not exposed as attributes on Client;
+    # instantiate them explicitly.
+    from appwrite.services.databases import Databases
+    db_service = Databases(client)
 
     # 1. Create the database (idempotent — Appwrite returns 409 if exists)
     try:
-        client.databases.create(database_id=DATABASE_ID, name="agentops production")
+        db_service.create(database_id=DATABASE_ID, name="agentops production")
         log.info("Created database %s", DATABASE_ID)
     except Exception as e:
         if "already exists" in str(e).lower() or "409" in str(e):
@@ -118,7 +169,7 @@ def run() -> int:
     for col in COLLECTIONS:
         coll_id = col["collectionId"]
         try:
-            client.databases.create_collection(
+            db_service.create_collection(
                 database_id=DATABASE_ID,
                 collection_id=coll_id,
                 name=col["name"],
@@ -135,11 +186,13 @@ def run() -> int:
         for attr in col["attributes"]:
             try:
                 kind = attr["type"]
-                method = getattr(client.databases, f"create_{kind}_attribute", None)
+                method = getattr(db_service, f"create_{kind}_attribute", None)
                 if not method:
                     log.error("unknown attr type: %s", kind)
                     return 1
-                method(database_id=DATABASE_ID, collection_id=coll_id, **attr)
+                # Strip the "type" key — the method name already encodes it
+                kwargs = {k: v for k, v in attr.items() if k != "type"}
+                method(database_id=DATABASE_ID, collection_id=coll_id, **kwargs)
                 log.info("  +attr %s (%s)", attr["key"], kind)
                 time.sleep(0.3)  # Appwrite is async; let it settle
             except Exception as e:
@@ -153,7 +206,7 @@ def run() -> int:
         # Indexes
         for idx in col["indexes"]:
             try:
-                client.databases.create_index(
+                db_service.create_index(
                     database_id=DATABASE_ID,
                     collection_id=coll_id,
                     key=idx["key"],

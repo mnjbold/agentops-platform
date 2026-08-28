@@ -18,6 +18,31 @@ from webhooks.handlers.base import BaseEventHandler, WebhookContext, now_iso
 log = logging.getLogger(__name__)
 
 
+def _telnyx_to_call_status(event_type: str, notes: str = "") -> str:
+    """Map a Telnyx call event to a coarse status for the calls table."""
+    if event_type == "call.initiated":
+        return "initiated"
+    if event_type == "call.ringing":
+        return "ringing"
+    if event_type == "call.answered":
+        return "answered"
+    if event_type == "call.hangup":
+        return "completed"
+    if event_type == "call.completed":
+        return "completed"
+    if event_type == "call.busy":
+        return "busy"
+    if event_type == "call.no-answer":
+        return "no-answer"
+    if event_type == "call.failed":
+        return "failed"
+    # Fallback: use the notes prefix if it looks like one of our internal tags
+    for tag in ("incoming", "answered_no_routing", "started_assistant", "error"):
+        if tag in (notes or ""):
+            return tag
+    return event_type
+
+
 def _extract_phone(field) -> Optional[str]:
     """Telnyx webhooks put phones in either ``"+1555..."`` or
     ``{"phone_number": "+1555..."}`` depending on the event type. Be lenient."""
@@ -46,7 +71,7 @@ class DefaultEventHandler(BaseEventHandler):
         self.registry = get_registry()
 
     def _log_event(self, ctx: WebhookContext, notes: str = "") -> None:
-        """Persist to all configured connectors."""
+        """Persist to all configured connectors AND to Appwrite (the SaaS data layer)."""
         try:
             from_ = _extract_phone(ctx.payload.get("from"))
             to_ = _extract_phone(ctx.payload.get("to"))
@@ -64,6 +89,110 @@ class DefaultEventHandler(BaseEventHandler):
             log.debug("event written to: %s", written)
         except Exception as e:
             log.warning("Failed to write event to connectors: %s", e)
+
+        # Also persist to Appwrite (the new SaaS data layer).
+        # Best-effort: never let an Appwrite failure break the webhook handler.
+        try:
+            self._write_to_appwrite(ctx, notes=notes)
+        except Exception as e:
+            log.warning("Failed to write event to Appwrite: %s", e)
+
+    def _write_to_appwrite(self, ctx: WebhookContext, notes: str = "") -> None:
+        """Write the webhook event to Appwrite collections.
+
+        Strategy:
+        - Always: append to `telnyx_events` (audit log)
+        - Call events (call.*): upsert a row in `calls` keyed by call_control_id
+        - Message events (message.*): upsert a row in `messages` keyed by message_id
+        """
+        from appx.repos import telnyx_events as events_repo
+        from datetime import datetime, timezone
+
+        from_ = _extract_phone(ctx.payload.get("from")) or ""
+        to_ = _extract_phone(ctx.payload.get("to")) or ""
+        direction = ctx.payload.get("direction") or ""
+        event_type = ctx.event_type or "unknown"
+        now = datetime.now(timezone.utc).isoformat()
+
+        # 1) Audit log (always)
+        try:
+            events_repo.append(
+                event_type=event_type,
+                call_control_id=ctx.call_control_id or "",
+                from_number=from_,
+                to_number=to_,
+                direction=direction,
+                payload=ctx.payload if isinstance(ctx.payload, dict) else {"raw": str(ctx.payload)},
+                received_at=now,
+            )
+        except Exception as e:
+            log.debug("events_repo.append failed: %s", e)
+
+        # 2) Call events
+        if event_type.startswith("call."):
+            try:
+                from appx.repos import calls as calls_repo
+                # Map Telnyx event_type → our status
+                status = _telnyx_to_call_status(event_type, notes)
+                started_at = ctx.payload.get("start_time") or now
+                answered_at = ctx.payload.get("answer_time") or (now if event_type == "call.answered" else None)
+                ended_at = ctx.payload.get("end_time") or (now if event_type in ("call.hangup", "call.completed") else None)
+                duration = 0
+                if isinstance(started_at, str) and isinstance(ended_at, str):
+                    try:
+                        from datetime import datetime
+                        s = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        e = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+                        duration = max(0, int((e - s).total_seconds()))
+                    except Exception:
+                        pass
+                if ctx.call_control_id:
+                    calls_repo.upsert_call(
+                        tenant_id="default",
+                        call_control_id=ctx.call_control_id,
+                        direction=direction or "unknown",
+                        from_number=from_,
+                        to_number=to_,
+                        from_name="",
+                        to_name="",
+                        status=status,
+                        started_at=started_at,
+                        answered_at=answered_at,
+                        ended_at=ended_at,
+                        duration_seconds=duration,
+                        has_recording=bool(ctx.payload.get("recording_id")),
+                        recording_url=ctx.payload.get("recording_urls", [None])[0] if ctx.payload.get("recording_urls") else "",
+                        assistant_id=ctx.agent_id or "",
+                    )
+            except Exception as e:
+                log.debug("calls_repo.upsert_call failed: %s", e)
+
+        # 3) Message events
+        if event_type.startswith("message."):
+            try:
+                from appx.repos import messages as messages_repo
+                msg_id = ctx.payload.get("id") or ctx.payload.get("message_id") or ""
+                if msg_id:
+                    body = ctx.payload.get("text") or ctx.payload.get("body") or ""
+                    media = ctx.payload.get("media", []) or []
+                    media_urls = [m.get("url", "") for m in media if isinstance(m, dict)]
+                    direction = direction or ("inbound" if event_type == "message.received" else "outbound")
+                    received = now if event_type == "message.received" else None
+                    sent = now if event_type in ("message.sent", "message.delivered") else None
+                    messages_repo.upsert_message(
+                        tenant_id="default",
+                        message_id=msg_id,
+                        direction=direction,
+                        from_number=from_,
+                        to_number=to_,
+                        body=body,
+                        media_urls=media_urls,
+                        status=event_type.split(".")[-1],
+                        sent_at=sent,
+                        received_at=received,
+                    )
+            except Exception as e:
+                log.debug("messages_repo.upsert_message failed: %s", e)
 
     def event_call_initiated(self, ctx: WebhookContext) -> str:
         called = _extract_phone(ctx.payload.get("to"))

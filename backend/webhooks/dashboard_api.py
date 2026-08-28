@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import secrets
+import sys
 import threading
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -38,6 +39,28 @@ from fastapi.responses import Response
 
 from connectors.registry import get_registry
 from telnyx_mcp.clients.telnyx_client import get_client, to_dict
+
+# Make the `appx` package importable. The canonical copy lives in
+# `agentops-platform/backend/appx/` (the new monorepo). This server still
+# runs from W3J-BIJOU PROJECT/webhooks/, so we add the monorepo's backend
+# dir to sys.path. When we fully migrate the running server into
+# agentops-platform/backend/, this shim becomes a no-op (backend/ is
+# already on sys.path then).
+_APPX_PARENT = Path(__file__).resolve().parent.parent.parent / "agentops-platform" / "backend"
+if _APPX_PARENT.exists() and str(_APPX_PARENT) not in sys.path:
+    sys.path.insert(0, str(_APPX_PARENT))
+
+
+def _resolve_tenant(request: Optional[Request] = None) -> str:
+    """Resolve the tenant id from the ``X-Tenant-Id`` header, defaulting
+    to ``"default"`` for the single-tenant MVP. Mirrors the later
+    ``_tenant_id(request)`` helper but is available before the contacts
+    section (which imports ``webhooks.storage``).
+    """
+    if request is None:
+        return "default"
+    tid = request.headers.get("X-Tenant-Id") or request.headers.get("x-tenant-id")
+    return (tid or "default").strip() or "default"
 
 log = logging.getLogger(__name__)
 # Uvicorn reconfigures the root logger during startup and may reset the
@@ -309,11 +332,60 @@ def get_agents() -> dict:
 
 
 @router.get("/calls/recent")
-def recent_calls(limit: int = 20) -> dict:
-    reg = get_registry()
-    sqlite = next(cn for cn in reg._connectors if cn.name == "sqlite")
-    evs = sqlite.recent_events(limit=min(limit, 200))
-    return {"events": evs, "count": len(evs)}
+def recent_calls(request: Request, limit: int = 20) -> dict:
+    """Recent call history from the SaaS data layer (Appwrite `calls`).
+
+    The webhook handler writes inbound and outbound call events to Appwrite
+    as the source of truth. We also fall back to the SQLite event log if
+    Appwrite is unreachable, so the dashboard never goes blank.
+    """
+    cap = min(max(int(limit), 1), 200)
+    tid = _resolve_tenant(request)
+    # Primary: Appwrite
+    try:
+        from appx.repos import calls as calls_repo
+        docs = calls_repo.list_recent(tid, limit=cap)
+        shaped = [_shape_appwrite_call_for_ui(d) for d in docs]
+        return {"events": shaped, "count": len(shaped), "source": "appwrite"}
+    except Exception as e:
+        log.warning("Appwrite /calls/recent failed, falling back to sqlite: %s", e)
+    # Fallback: SQLite event log (older installs before Appwrite write-through)
+    try:
+        reg = get_registry()
+        sqlite = next(cn for cn in reg._connectors if cn.name == "sqlite")
+        evs = sqlite.recent_events(limit=cap)
+        return {"events": evs, "count": len(evs), "source": "sqlite"}
+    except Exception as e:
+        log.warning("sqlite /calls/recent fallback also failed: %s", e)
+        return {"events": [], "count": 0, "error": str(e)}
+
+
+def _shape_appwrite_call_for_ui(doc: dict) -> dict:
+    """Map an Appwrite `calls` document to the dashboard's expected event shape.
+
+    The frontend reads ``event_type``, ``from_number``, ``to_number``,
+    ``timestamp`` from this list — same field names the old SQLite events
+    used, so the existing UI works without changes.
+    """
+    return {
+        "id": doc.get("call_control_id") or doc.get("$id"),
+        "event_type": f"call.{doc.get('status', 'unknown')}",
+        "call_control_id": doc.get("call_control_id") or doc.get("$id"),
+        "direction": doc.get("direction", ""),
+        "from_number": doc.get("from_number", ""),
+        "to_number": doc.get("to_number", ""),
+        "from_name": doc.get("from_name", ""),
+        "to_name": doc.get("to_name", ""),
+        "timestamp": doc.get("started_at") or doc.get("$createdAt") or doc.get("ended_at"),
+        "started_at": doc.get("started_at"),
+        "answered_at": doc.get("answered_at"),
+        "ended_at": doc.get("ended_at"),
+        "duration_seconds": doc.get("duration_seconds", 0),
+        "status": doc.get("status", "unknown"),
+        "has_recording": doc.get("has_recording", False),
+        "recording_url": doc.get("recording_url", ""),
+        "assistant_id": doc.get("assistant_id", ""),
+    }
 
 
 @router.get("/recordings")
@@ -360,7 +432,13 @@ def get_balance() -> dict:
 
 @router.post("/dial")
 async def api_dial(request: Request) -> dict:
-    """Place an outbound call. JSON body: {to, from?, webhook_url?, connection_id?}"""
+    """Place an outbound call. JSON body: {to, from?, webhook_url?, connection_id?}
+
+    Also upserts a row in Appwrite ``calls`` so the dashboard's call history
+    is populated before the webhook handler sees the call.initiated event.
+    Telnyx is the source of truth for the call itself; Appwrite is the
+    source of truth for the local dashboard view.
+    """
     body = await request.json()
     to = body.get("to")
     if not to:
@@ -419,7 +497,35 @@ async def api_dial(request: Request) -> dict:
             headers={"Authorization": f"Bearer {c.creds.api_key}", "Content-Type": "application/json"},
             timeout=20,
         )
-        return {"status": r.status_code, "body": r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text[:500]}
+        body_json = (
+            r.json()
+            if r.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        out = {
+            "status": r.status_code,
+            "body": body_json if body_json else (r.text[:500] if r.text else ""),
+        }
+        # Best-effort: also write to Appwrite so the dashboard sees the call
+        # before the webhook handler updates it. The webhook handler will
+        # later upsert with full Telnyx metadata (status, duration, recording).
+        try:
+            call_control_id = (body_json.get("data") or {}).get("call_control_id") or ""
+            if call_control_id and r.status_code < 400:
+                from appx.repos import calls as calls_repo
+                now_iso = datetime.now(timezone.utc).isoformat()
+                calls_repo.upsert_call(
+                    tenant_id=_resolve_tenant(request),
+                    call_control_id=call_control_id,
+                    direction="outbound",
+                    from_number=from_num,
+                    to_number=to,
+                    status="initiated",
+                    started_at=now_iso,
+                )
+        except Exception as e:
+            log.warning("Appwrite upsert_call after /dial failed (non-fatal): %s", e)
+        return out
     except Exception as e:
         raise HTTPException(500, f"Telnyx dial error: {e}")
 
@@ -471,7 +577,13 @@ async def api_answer_call(call_control_id: str) -> dict:
 
 @router.post("/sms")
 async def api_sms(request: Request) -> dict:
-    """Send an SMS. JSON body: {to, from?, text}"""
+    """Send an SMS. JSON body: {to, from?, text}
+
+    Also upserts a row in Appwrite ``messages`` so the dashboard sees the
+    outgoing SMS immediately. Mirrors ``/api/sms/send`` (the UI-friendly
+    version that returns ``{ok, id, ...}``) but uses the older
+    ``{status, body}`` shape for backwards compat.
+    """
     body = await request.json()
     to = body.get("to")
     text = body.get("text")
@@ -487,7 +599,34 @@ async def api_sms(request: Request) -> dict:
             headers={"Authorization": f"Bearer {c.creds.api_key}", "Content-Type": "application/json"},
             timeout=15,
         )
-        return {"status": r.status_code, "body": r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text[:500]}
+        body_json = (
+            r.json()
+            if r.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        # Best-effort Appwrite write so the dashboard history is complete
+        # regardless of which endpoint the caller uses.
+        try:
+            msg_id = (body_json.get("data") or {}).get("id")
+            if msg_id and r.status_code < 400:
+                from appx.repos import messages as messages_repo
+                now_iso = datetime.now(timezone.utc).isoformat()
+                messages_repo.upsert_message(
+                    tenant_id=_resolve_tenant(request),
+                    message_id=msg_id,
+                    direction="outbound",
+                    from_number=from_num,
+                    to_number=to,
+                    body=text,
+                    status="queued",
+                    sent_at=now_iso,
+                )
+        except Exception as e:
+            log.warning("Appwrite upsert_message after /sms failed (non-fatal): %s", e)
+        return {
+            "status": r.status_code,
+            "body": body_json if body_json else (r.text[:500] if r.text else ""),
+        }
     except Exception as e:
         raise HTTPException(500, f"Telnyx SMS error: {e}")
 
@@ -635,57 +774,88 @@ def proxy_recording_audio(recording_id: str) -> Response:
 
 
 @router.get("/messages/recent")
-def recent_messages(limit: int = 50) -> dict:
-    """Recent inbound + outbound SMS messages from the Telnyx account.
+def recent_messages(request: Request, limit: int = 50) -> dict:
+    """Recent inbound + outbound SMS from the SaaS data layer (Appwrite `messages`).
 
-    Backed by the Telnyx **Message Detail Records (MDR)** endpoint
-    ``/v2/detail_records?filter[record_type]=messaging`` — the SDK v4
-    ``MessagesResource`` has no ``list()`` method, so the MDR is the
-    only way to enumerate historical messages. Each MDR carries
-    metadata (cli/cld/direction/cost/timestamps) but NOT the message
-    body; we attempt ``GET /v2/messages/{id}`` to backfill the ``text``
-    field for messages newer than 10 days (Telnyx's retention window
-    for the per-message retrieve endpoint).
-
-    Sorted by ``created_at`` desc, capped at 200.
+    The webhook handler writes every message event (inbound + outbound) to
+    Appwrite as the source of truth. Falls back to the Telnyx MDR endpoint
+    if Appwrite is unreachable, so the dashboard never goes blank.
     """
-    c = get_client()
     cap = min(max(int(limit), 1), 200)
+    tid = _resolve_tenant(request)
+    # Primary: Appwrite
+    try:
+        from appx.repos import messages as messages_repo
+        docs = messages_repo.list_recent(tid, limit=cap)
+        out = [_shape_appwrite_message_for_ui(d) for d in docs]
+        return {"messages": out, "count": len(out), "source": "appwrite"}
+    except Exception as e:
+        log.warning("Appwrite /messages/recent failed, falling back to MDR: %s", e)
+    # Fallback: Telnyx MDR
+    c = get_client()
     try:
         mdrs = _list_mdr_messages(c, cap, sort="-created_at")
     except Exception as e:
-        raise HTTPException(500, f"Telnyx MDR error: {e}")
-    out: list[dict] = []
-    for m in mdrs[:cap]:
-        out.append(_shape_message_for_ui(m))
-    return {"messages": out, "count": len(out)}
+        return {"messages": [], "count": 0, "error": f"Appwrite and Telnyx both failed: {e}"}
+    out = [_shape_message_for_ui(m) for m in mdrs[:cap]]
+    return {"messages": out, "count": len(out), "source": "telnyx-mdr"}
+
+
+def _shape_appwrite_message_for_ui(doc: dict) -> dict:
+    """Map an Appwrite `messages` document to the dashboard's expected shape."""
+    direction = doc.get("direction", "")
+    from_n = doc.get("from_number", "")
+    to_n = doc.get("to_number", "")
+    return {
+        "id": doc.get("message_id") or doc.get("$id"),
+        "direction": direction,
+        "from": {"phone_number": from_n} if from_n else None,
+        "to": [{"phone_number": to_n}] if to_n else [],
+        "text": doc.get("body", ""),
+        "created_at": doc.get("sent_at") or doc.get("received_at") or doc.get("$createdAt"),
+        "completed_at": doc.get("$updatedAt"),
+        "read": None,
+        "type": "SMS",
+        "errors": None,
+        "media_urls": doc.get("media_urls", []),
+    }
 
 
 @router.get("/messages/threads")
-def message_threads(limit: int = 30) -> dict:
+def message_threads(request: Request, limit: int = 30) -> dict:
     """SMS threads: one entry per remote phone number, latest message wins.
 
-    Backed by the Telnyx MDR endpoint (see ``/messages/recent`` for why).
-    Pulls the most recent 200 messages and groups by the "other party":
-    for inbound messages that's ``cli``; for outbound it's ``cld``.
-    Sort by ``last_at`` desc. Capped at 30 threads.
+    Backed by Appwrite `messages` (single source of truth). The "remote"
+    number is the OTHER side of the conversation (i.e. not the softphone's
+    owned number for the tenant). Falls back to the Telnyx MDR grouping
+    if Appwrite is unreachable.
+
+    Reads up to 500 recent messages and groups in Python (Appwrite has no
+    native group-by; for thousands of threads a real aggregation is needed,
+    but the MVP is single-user).
     """
-    c = get_client()
     cap = min(max(int(limit), 1), 30)
+    tid = _resolve_tenant(request)
+    # Primary: Appwrite
+    try:
+        from appx.repos import messages as messages_repo
+        docs = messages_repo.list_recent(tid, limit=500)
+        threads = _group_messages_into_threads(docs, cap=cap)
+        return {"threads": threads, "count": len(threads), "source": "appwrite"}
+    except Exception as e:
+        log.warning("Appwrite /messages/threads failed, falling back to MDR: %s", e)
+    # Fallback: Telnyx MDR
+    c = get_client()
     try:
         msgs = _list_mdr_messages(c, 200, sort="-created_at")
     except Exception as e:
-        return {"threads": [], "count": 0, "error": str(e)}
+        return {"threads": [], "count": 0, "error": f"Appwrite and Telnyx both failed: {e}"}
 
-    threads: dict[str, dict] = {}
+    threads_mdr: dict[str, dict] = {}
     for m in msgs:
         direction = m.get("direction")
         cli = m.get("cli")
         cld = m.get("cld")
-        # Group by the "other party" from this account's perspective.
-        # For inbound, the remote is the caller (cli). For outbound, the callee (cld).
-        # We also have to exclude our own owned numbers so the thread owner
-        # doesn't appear as a "remote".
         remote: Optional[str] = None
         if direction == "inbound" and cli:
             remote = cli
@@ -694,9 +864,9 @@ def message_threads(limit: int = 30) -> dict:
         if not remote:
             continue
         ts = m.get("created_at") or ""
-        slot = threads.get(remote)
+        slot = threads_mdr.get(remote)
         if slot is None:
-            threads[remote] = {
+            threads_mdr[remote] = {
                 "remote": remote,
                 "last_message": m.get("text"),
                 "last_direction": direction,
@@ -704,18 +874,52 @@ def message_threads(limit: int = 30) -> dict:
                 "unread_count": 0,
                 "message_count": 0,
             }
-            slot = threads[remote]
+            slot = threads_mdr[remote]
         slot["message_count"] += 1
-        # MDR doesn't carry a "read" flag; until we wire inbound webhooks
-        # to mark unread, we conservatively count all inbound in the thread
-        # as unread so the UI badge reflects inbound volume.
         if direction == "inbound":
             slot["unread_count"] += 1
 
     thread_list = sorted(
+        threads_mdr.values(), key=lambda t: t.get("last_at") or "", reverse=True
+    )[:cap]
+    return {"threads": thread_list, "count": len(thread_list), "source": "telnyx-mdr"}
+
+
+def _group_messages_into_threads(docs: list[dict], cap: int) -> list[dict]:
+    """Group Appwrite `messages` documents into per-remote threads.
+
+    "Remote" = the number on the OTHER side of the conversation. For
+    inbound messages (where the remote party texted us) the remote is
+    ``from_number``. For outbound (where we texted them) the remote is
+    ``to_number``. We don't know which side is "us" without a tenant
+    number list, so the dedupe is by (from, to) pair to make sure
+    a back-and-forth between two numbers collapses into one thread.
+    """
+    threads: dict[tuple[str, str], dict] = {}
+    for d in docs:
+        from_n = d.get("from_number") or ""
+        to_n = d.get("to_number") or ""
+        if not from_n and not to_n:
+            continue
+        # Sorted pair so A→B and B→A collapse into one thread
+        pair = tuple(sorted([from_n, to_n]))
+        if pair not in threads:
+            threads[pair] = {
+                "remote": from_n if from_n and from_n != pair[0] else to_n,
+                "last_message": d.get("body", ""),
+                "last_direction": d.get("direction", ""),
+                "last_at": d.get("sent_at") or d.get("received_at") or d.get("$createdAt"),
+                "unread_count": 0,
+                "message_count": 0,
+            }
+        slot = threads[pair]
+        slot["message_count"] += 1
+        if d.get("direction") == "inbound":
+            slot["unread_count"] += 1
+    thread_list = sorted(
         threads.values(), key=lambda t: t.get("last_at") or "", reverse=True
     )[:cap]
-    return {"threads": thread_list, "count": len(thread_list)}
+    return thread_list
 
 
 @router.post("/sms/send")
@@ -726,6 +930,10 @@ async def api_sms_send(request: Request) -> dict:
     provided. We deliberately do NOT raise ``HTTPException`` on Telnyx
     errors — the dashboard expects a 200 with ``ok: false`` so it can
     render the error inline next to the compose box.
+
+    Also upserts a row in Appwrite ``messages`` so the dashboard's message
+    list shows the outgoing SMS before the webhook handler confirms it.
+    The webhook handler will later update the row with delivered/queued status.
 
     Note: the Telnyx Python SDK v4 ``MessagesResource`` has no generic
     ``create()`` method, only number-type-specific ones (``send_long_code``,
@@ -764,6 +972,24 @@ async def api_sms_send(request: Request) -> dict:
             else {}
         )
         msg_id = (body_json.get("data") or {}).get("id")
+        # Best-effort: write to Appwrite immediately so the dashboard shows
+        # the message as "queued/sent" before the webhook handler confirms.
+        try:
+            if msg_id:
+                from appx.repos import messages as messages_repo
+                now_iso = datetime.now(timezone.utc).isoformat()
+                messages_repo.upsert_message(
+                    tenant_id=_resolve_tenant(request),
+                    message_id=msg_id,
+                    direction="outbound",
+                    from_number=from_num,
+                    to_number=to,
+                    body=text,
+                    status="queued",
+                    sent_at=now_iso,
+                )
+        except Exception as e:
+            log.warning("Appwrite upsert_message after /sms/send failed (non-fatal): %s", e)
         return {
             "ok": True,
             "id": msg_id,
