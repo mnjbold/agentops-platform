@@ -281,7 +281,7 @@
         </div>
         <div>
           <h1 class="text-xl font-bold">agentops</h1>
-          <p class="text-xs text-gray-500 mono">v0.4.7 · agent console · Telnyx WebRTC + Appwrite</p>
+          <p class="text-xs text-gray-500 mono">v0.4.8 · agent console · Telnyx WebRTC + Appwrite</p>
         </div>
       </div>
       <h2 class="text-2xl font-bold mb-1">Sign in</h2>
@@ -299,7 +299,7 @@
       </form>
       <p id="login-error" class="text-xs text-red-400 mt-3 hidden"></p>
       <div class="mt-6 pt-6 border-t border-gray-800 text-xs text-gray-500">
-        <p>Backend: <span class="mono" id="backend-url">https://bk-jr-api.aixlabs.fun</span></p>
+        <p>Backend: <span class="mono" id="backend-url">https://bkjr-api.getbijou.xyz</span></p>
         <p class="mt-1">Telephony: Telnyx WebRTC SDK Â· WSS via Cloudflare</p>
       </div>
     </div>
@@ -316,7 +316,7 @@
           </div>
           <div class="min-w-0">
             <h1 class="text-base font-bold truncate">agentops</h1>
-            <p class="text-[10px] text-gray-500 mono truncate">v0.4.7 · <span id="user-label">agent</span></p>
+            <p class="text-[10px] text-gray-500 mono truncate">v0.4.8 · <span id="user-label">agent</span></p>
           </div>
           <!-- status pill: visible on mobile, hidden on very small (where space is precious) -->
           <span class="ml-2 sm:ml-3 pill pill-on shrink-0" id="status-pill"><span class="dot dot-on" id="status-dot"></span> <span id="status-text" class="hidden xs:inline">Ready</span></span>
@@ -366,7 +366,7 @@
         </div>
         <button class="btn btn-ghost justify-start text-left" onclick="openSettings(); toggleHeaderMenu();">⚙️  Settings</button>
         <button class="btn btn-ghost justify-start text-left" onclick="logout(); toggleHeaderMenu();">⎋  Sign out</button>
-        <div class="mt-auto text-[10px] text-gray-500 mono">v0.4.7 · <span id="user-label-sheet">agent</span></div>
+        <div class="mt-auto text-[10px] text-gray-500 mono">v0.4.8 · <span id="user-label-sheet">agent</span></div>
       </div>
     </div>
 
@@ -680,7 +680,7 @@
     // ============================================================
     // CONFIG
     // ============================================================
-    const API_BASE = "https://bk-jr-api.aixlabs.fun";
+    const API_BASE = "https://bkjr-api.getbijou.xyz";
     const API_PREFIX = "/api";
 
     // ============================================================
@@ -1300,7 +1300,7 @@
         // from number, sets the webhook, and creates the call. The call
         // returns a call_control_id; we don't need it on the client but
         // we log it for debugging.
-        fetch('https://bk-jr-api.aixlabs.fun/api/dial', {
+        fetch('https://bkjr-api.getbijou.xyz/api/dial', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'default' },
           body: JSON.stringify({ to: number, from: caller }),
@@ -1338,7 +1338,7 @@
         // `activeCall.hangup()` is best-effort.
         const cci = activeCall && (activeCall.parameters?.CallControlId || activeCall.id);
         if (cci) {
-          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/hangup`, {
+          fetch(`https://bkjr-api.getbijou.xyz/api/calls/${encodeURIComponent(cci)}/hangup`, {
             method: 'POST', headers: { 'X-Tenant-Id': 'default' },
           }).catch((e) => console.warn('server-side hangup failed', e));
         }
@@ -2218,7 +2218,7 @@
         // doesn't get auto-rejected by the AMD timeout.
         const cciServer = pendingIncomingCall && pendingIncomingCall.call_control_id;
         if (cciServer) {
-          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cciServer)}/answer`, {
+          fetch(`https://bkjr-api.getbijou.xyz/api/calls/${encodeURIComponent(cciServer)}/answer`, {
             method: 'POST', headers: { 'X-Tenant-Id': 'default' },
           }).catch((e) => console.warn('server-side answer failed', e));
         }
@@ -2248,7 +2248,7 @@
       //    browser SDK has no object to hangup â€” we MUST hit the server.
       const cci = pendingIncomingCall && pendingIncomingCall.call_control_id;
       if (cci) {
-        fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/reject`, {
+        fetch(`https://bkjr-api.getbijou.xyz/api/calls/${encodeURIComponent(cci)}/reject`, {
           method: 'POST', headers: { 'X-Tenant-Id': 'default' },
         }).catch((e) => console.warn('reject call API failed', e));
       }
@@ -2274,7 +2274,7 @@
         // Active call â€” hang up via SDK + server
         const cci = activeCall.parameters?.CallControlId || activeCall.id;
         if (cci) {
-          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/hangup`, {
+          fetch(`https://bkjr-api.getbijou.xyz/api/calls/${encodeURIComponent(cci)}/hangup`, {
             method: 'POST', headers: { 'X-Tenant-Id': 'default' },
           }).catch((e) => console.warn('hangup API failed', e));
         }
