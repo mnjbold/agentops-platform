@@ -1,0 +1,50 @@
+# ---- env / secrets ----
+.env
+.env.*
+!.env.example
+*.log
+secrets/
+
+# SIP credentials (real secret-bearing JSON, see scripts/sip_credentials.example.json)
+**/sip_credentials.json
+**/sip_credentials*.local.json
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- sqlite (runtime data) ----
+*.db
+*.db-shm
+*.db-wal
+
+# ---- node / frontend ----
+node_modules/
+.npm/
+.yarn/
+
+# ---- editor / OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- staging dirs (move-out leftovers) ----
+**/w3j-bijou-delete-me/
+**/.trash/
+
+# ---- temp worktrees ----
+.worktrees/

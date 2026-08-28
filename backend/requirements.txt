@@ -1,0 +1,30 @@
+# agentops backend — Python dependencies
+# Freeze: 2026-08-29 from W3J-BIJOU PROJECT venv
+
+# web framework
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+websockets==17.0.1
+
+# http / async
+httpx==0.28.1
+httpx-sse==0.4.3
+anyio==4.14.2
+
+# data validation / settings
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# env / secrets
+python-dotenv==1.2.2
+
+# crypto / auth
+PyJWT==2.13.0
+cryptography==50.0.0
+
+# CLI helpers
+click==8.4.2
+colorama==0.4.6
+
+# telnyx SDK (for non-HTTP control actions)
+telnyx==4.170.0

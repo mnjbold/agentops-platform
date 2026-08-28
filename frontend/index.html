@@ -1,0 +1,2488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>agentops â€” Cloud Telephony</title>
+  <!-- PWA shell (v0.4.0) -->
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <meta name="theme-color" content="#0b1220">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="agentops">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // v0.4.3: add an `xs` breakpoint between mobile and `sm` (Tailwind CDN has no `xs` by default).
+    // We use 420px so phones in landscape / larger Androids keep the desktop-style header (status
+    // pill text, WS/SDK diagnostics inline). Smaller phones collapse to the mobile sheet.
+    if (window.tailwind && window.tailwind.config) {
+      window.tailwind.config = Object.assign({}, window.tailwind.config, {
+        theme: Object.assign({}, (window.tailwind.config && window.tailwind.config.theme) || {}, {
+          screens: Object.assign({ xs: '420px' },
+            ((window.tailwind.config && window.tailwind.config.theme && window.tailwind.config.theme.screens) || {})),
+        }),
+      });
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.8.2/lib/bundle.js" crossorigin="anonymous"
+          onload="window.__telnyxBundleLoaded = true; console.log('Telnyx bundle onload fired, window.TelnyxWebRTC =', typeof window.TelnyxWebRTC);"
+          onerror="console.error('Telnyx bundle failed to load from CDN');"></script>
+  <script>
+    // Trace SDK global presence for 10s. Writes to a global var so the main script can show it.
+    (function traceBundle() {
+      const start = Date.now();
+      window.__bundleTrace = [];
+      const tick = () => {
+        const t = window.TelnyxWebRTC;
+        const has = !!t;
+        const isObj = has && typeof t === 'object';
+        const hasClient = isObj && !!t.Client;
+        window.__bundleTrace.push({
+          t: Date.now() - start,
+          onload: !!window.__telnyxBundleLoaded,
+          hasTelnyxWebRTC: has,
+          type: typeof t,
+          keys: isObj ? Object.keys(t).slice(0, 10) : null,
+          hasClient: hasClient,
+        });
+        if (Date.now() - start < 10000 && !hasClient) setTimeout(tick, 200);
+      };
+      tick();
+    })();
+  </script>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --panel: #11121a;
+      --panel2: #1a1c28;
+      --border: #232636;
+      --text: #e8eaf2;
+      --muted: #8b8fa8;
+      --accent: #00d4aa;
+      --accent2: #7c5cff;
+      --warn: #ffb020;
+      --danger: #ff4d6d;
+      --ok: #00d4aa;
+    }
+    html, body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+    .panel-2 { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; }
+    .gradient-text { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .btn { padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 14px; transition: all 0.15s; cursor: pointer; border: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #001a14; }
+    .btn-primary:hover:not(:disabled) { background: #00bfa0; }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-danger:hover:not(:disabled) { background: #e6415e; }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--panel2); }
+    .btn-ghost.active { background: var(--panel2); border-color: var(--accent); color: var(--accent); }
+    .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pill-on { background: rgba(0, 212, 170, 0.15); color: var(--accent); }
+    .pill-warn { background: rgba(255, 176, 32, 0.15); color: var(--warn); }
+    .pill-off { background: rgba(255, 77, 109, 0.15); color: var(--danger); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .dot-warn { background: var(--warn); }
+    .dot-off { background: var(--danger); }
+    .dot-ring { animation: ring 1.4s infinite; background: var(--warn); }
+    @keyframes ring { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.6; } }
+    input, select, textarea {
+      background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 10px 14px; font-size: 14px; width: 100%; outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .stat-num { font-size: 32px; font-weight: 800; line-height: 1; }
+    .scroll-y { max-height: 480px; overflow-y: auto; }
+    .scroll-y::-webkit-scrollbar { width: 6px; }
+    .scroll-y::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .modal-bg { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    .tab { padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 500; font-size: 14px; transition: all 0.15s; }
+    .tab-active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab:hover { color: var(--text); }
+    .keypad-key {
+      aspect-ratio: 1; display: flex; align-items: center; justify-content: center; flex-direction: column;
+      font-size: 24px; font-weight: 400; color: var(--text);
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 50%; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+      transition: background 0.08s, transform 0.08s, box-shadow 0.08s;
+      width: 100%; max-width: 68px; min-width: 56px; aspect-ratio: 1;
+    }
+    .keypad-key:hover { background: rgba(255,255,255,0.08); }
+    .keypad-key:active, .keypad-key.pressed { background: var(--accent); color: #001a14; transform: scale(0.94); box-shadow: 0 0 0 6px rgba(0,212,170,0.15); }
+    .keypad-key .sub { display: block; font-size: 9px; font-weight: 600; color: var(--muted); margin-top: 1px; letter-spacing: 0.15em; }
+    .keypad-key:active .sub, .keypad-key.pressed .sub { color: #001a14; }
+    .keypad-action {
+      aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+      font-size: 18px; transition: background 0.1s, transform 0.08s;
+      width: 100%; max-width: 68px; min-width: 56px;
+    }
+    .keypad-action:active { transform: scale(0.94); }
+    .keypad-call  { background: #00d4aa; color: #001a14; }
+    .keypad-call:active { background: #00bf9a; }
+    .keypad-back  { background: transparent; color: var(--muted); }
+    .keypad-back:active { background: rgba(255,255,255,0.06); color: var(--text); }
+    .ringing { animation: pulse-ring 1s infinite; }
+    @keyframes pulse-ring { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 176, 32, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(255, 176, 32, 0); } }
+    .call-card-active { background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), rgba(124, 92, 255, 0.1)); border-color: var(--accent); }
+    .msg-bubble { max-width: 70%; padding: 8px 14px; border-radius: 18px; word-wrap: break-word; }
+    .msg-out { background: var(--accent); color: #001a14; align-self: flex-end; border-bottom-right-radius: 4px; }
+    .msg-in { background: var(--panel2); color: var(--text); align-self: flex-start; border-bottom-left-radius: 4px; }
+    .msg-thread-active { background: rgba(0, 212, 170, 0.1) !important; border-left: 3px solid var(--accent); }
+    .hidden { display: none !important; }
+    /* v0.3.0: production polish */
+    .tab-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 700; background: var(--danger); color: white; min-width: 16px; line-height: 1.4; text-align: center; vertical-align: 1px; }
+    .tab-badge.tab-badge-accent { background: var(--accent); color: #001a14; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; text-align: center; min-height: 160px; }
+    .empty-state-icon { font-size: 42px; margin-bottom: 14px; opacity: 0.5; line-height: 1; }
+    .empty-state-title { color: var(--text); font-size: 14px; font-weight: 500; }
+    .empty-state-subtitle { color: var(--muted); font-size: 12px; margin-top: 6px; max-width: 320px; }
+    .filter-chip { padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; }
+    .filter-chip:hover { color: var(--text); }
+    .filter-chip.active { background: rgba(0, 212, 170, 0.15); color: var(--accent); border-color: var(--accent); }
+    .row-missed td { background: rgba(255, 77, 109, 0.08) !important; }
+    .toast { padding: 10px 16px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; color: var(--text); font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: toast-in 0.2s ease-out; max-width: 320px; pointer-events: auto; }
+    .toast-error { border-color: var(--danger); }
+    .toast-out { opacity: 0; transform: translateY(8px); transition: all 0.3s; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    #toast-wrap { position: fixed; bottom: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    .call-card-incoming { background: linear-gradient(135deg, rgba(255, 176, 32, 0.12), rgba(124, 92, 255, 0.1)); border-color: var(--warn); }
+    .call-card-dialing { background: linear-gradient(135deg, rgba(124, 92, 255, 0.10), rgba(0, 212, 170, 0.08)); border-color: var(--accent2); }
+    .dialpad-skel { width: 36px; height: 6px; background: var(--border); border-radius: 3px; margin: 6px auto 0; opacity: 0.6; }
+
+    /* â”€â”€â”€â”€â”€ Incoming call modal (v0.3.0) â”€â”€â”€â”€â”€ */
+    .incoming-modal-bg { background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px); }
+    .incoming-card {
+      background: linear-gradient(160deg, #1a1c28 0%, #11121a 100%);
+      border: 1px solid rgba(0, 212, 170, 0.3);
+      border-radius: 24px;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 212, 170, 0.1);
+      padding: 36px 32px;
+      width: 380px;
+      max-width: calc(100vw - 32px);
+      text-align: center;
+    }
+
+    /* â”€â”€â”€â”€â”€ Persistent call bar (v0.4.2 â€” mobile-friendly always-visible strip) â”€â”€â”€â”€â”€ */
+    .call-bar {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      z-index: 60;
+      background: linear-gradient(180deg, rgba(20,22,32,0.98) 0%, rgba(11,12,18,0.98) 100%);
+      border-top: 1px solid rgba(0, 212, 170, 0.4);
+      backdrop-filter: blur(12px);
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom)) 16px;
+      box-shadow: 0 -8px 24px rgba(0,0,0,0.5);
+      display: flex; align-items: center; gap: 12px;
+      animation: slideUp 0.25s ease-out;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+    .call-bar-pulse {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #00d4aa;
+      box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.6);
+      animation: pulse 1.4s infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.6); }
+      70%  { box-shadow: 0 0 0 12px rgba(0, 212, 170, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0); }
+    }
+    .call-bar-info { flex: 1; min-width: 0; }
+    .call-bar-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .call-bar-number { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .call-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .call-bar-btn {
+      width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; font-size: 20px;
+      transition: transform 0.1s;
+    }
+    .call-bar-btn:active { transform: scale(0.92); }
+    .call-bar-accept { background: #00d4aa; color: #001a14; }
+    .call-bar-decline { background: #ef4444; color: #fff; }
+    .call-bar-open    { background: rgba(255,255,255,0.1); color: #fff; }
+    .incoming-avatar {
+      width: 96px; height: 96px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 36px; font-weight: 700; color: #001a14;
+      animation: ring 1.4s infinite;
+    }
+    .incoming-caller-name { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+    .incoming-caller-num { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 14px; }
+    .incoming-actions { display: flex; gap: 24px; justify-content: center; margin-top: 28px; }
+    .incoming-action-btn {
+      width: 64px; height: 64px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      border: 0; cursor: pointer; font-size: 28px;
+      transition: transform 0.12s;
+    }
+    .incoming-action-btn:hover { transform: scale(1.08); }
+    .incoming-accept { background: var(--accent); color: #001a14; }
+    .incoming-decline { background: var(--danger); color: white; }
+
+    /* â”€â”€â”€â”€â”€ Toast notifications (top-right slide-in) â”€â”€â”€â”€â”€ */
+    .toast-stack {
+      position: fixed; top: 80px; right: 16px;
+      z-index: 60;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      min-width: 280px; max-width: 360px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+      transform: translateX(120%);
+      opacity: 0;
+      transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.32s;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .toast.show { transform: translateX(0); opacity: 1; }
+    .toast-info { border-left-color: var(--accent); }
+    .toast-sms { border-left-color: #7c5cff; }
+    .toast-recording { border-left-color: #ffb020; }
+    .toast-missed { border-left-color: var(--danger); }
+    .toast-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+    .toast-body { flex: 1; min-width: 0; }
+    .toast-title { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+    .toast-msg { font-size: 12px; color: var(--muted); margin: 0; word-wrap: break-word; }
+
+    /* WS status indicator next to the SDK status */
+    .ws-status { display: inline-flex; align-items: center; gap: 4px; }
+    .ws-status .dot { width: 6px; height: 6px; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen" class="min-h-screen flex items-center justify-center p-4">
+    <div class="panel max-w-md w-full p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, var(--accent), var(--accent2))">
+          <svg class="w-6 h-6" fill="none" stroke="#001a14" viewBox="0 0 24 24" stroke-width="2.5"><path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.95.68l1.5 4.34a1 1 0 01-.27 1.05L8.21 10.7a13 13 0 006.07 6.07l1.66-1.25a1 1 0 011.05-.27l4.34 1.5a1 1 0 01.68.95V20a2 2 0 01-2 2h-1C9.61 22 2 14.39 2 5V4z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold">agentops</h1>
+          <p class="text-xs text-gray-500 mono">v0.4.4 · agent console · Telnyx WebRTC</p>
+        </div>
+      </div>
+      <h2 class="text-2xl font-bold mb-1">Sign in</h2>
+      <p class="text-sm text-gray-500 mb-6">Browser-based softphone. Sign in to start receiving calls.</p>
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="text-xs text-gray-400 mb-1 block">Email</label>
+          <input id="login-user" type="text" placeholder="agent@w3j.dev" value="admin@w3j.dev" required />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 mb-1 block">Password</label>
+          <input id="login-password" type="password" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" value="demo" required />
+        </div>
+        <button type="submit" class="btn btn-primary w-full">Sign in â†’</button>
+      </form>
+      <p id="login-error" class="text-xs text-red-400 mt-3 hidden"></p>
+      <div class="mt-6 pt-6 border-t border-gray-800 text-xs text-gray-500">
+        <p>Backend: <span class="mono" id="backend-url">https://bk-jr-api.aixlabs.fun</span></p>
+        <p class="mt-1">Telephony: Telnyx WebRTC SDK Â· WSS via Cloudflare</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN SOFTPHONE -->
+  <div id="softphone" class="hidden min-h-screen flex flex-col">
+    <header class="border-b border-gray-800 sticky top-0 z-20" style="background: rgba(10, 10, 15, 0.92); backdrop-filter: blur(8px);">
+      <!-- Row 1: brand + status (mobile) OR brand + status + balance + actions (desktop) -->
+      <div class="max-w-7xl mx-auto px-3 sm:px-6 py-2 sm:py-3 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: linear-gradient(135deg, var(--accent), var(--accent2))">
+            <svg class="w-4 h-4" fill="none" stroke="#001a14" viewBox="0 0 24 24" stroke-width="2.5"><path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.95.68l1.5 4.34a1 1 0 01-.27 1.05L8.21 10.7a13 13 0 006.07 6.07l1.66-1.25a1 1 0 011.05-.27l4.34 1.5a1 1 0 01.68.95V20a2 2 0 01-2 2h-1C9.61 22 2 14.39 2 5V4z"/></svg>
+          </div>
+          <div class="min-w-0">
+            <h1 class="text-base font-bold truncate">agentops</h1>
+            <p class="text-[10px] text-gray-500 mono truncate">v0.4.4 · <span id="user-label">agent</span></p>
+          </div>
+          <!-- status pill: visible on mobile, hidden on very small (where space is precious) -->
+          <span class="ml-2 sm:ml-3 pill pill-on shrink-0" id="status-pill"><span class="dot dot-on" id="status-dot"></span> <span id="status-text" class="hidden xs:inline">Ready</span></span>
+        </div>
+        <!-- Diagnostics + balance + actions: hidden on mobile (we use a hamburger instead) -->
+        <div class="hidden md:flex items-center gap-3 shrink-0">
+          <span id="sdk-debug" class="text-[10px] mono text-gray-500" title="WebRTC SDK diagnostic">sdk:…</span>
+          <span class="ws-status text-[10px] mono text-gray-500" title="WebSocket event stream" id="ws-status"><span class="dot dot-off"></span> <span id="ws-status-text">ws:off</span></span>
+          <div class="text-right">
+            <p class="text-xs text-gray-500">Balance</p>
+            <p class="text-lg font-bold mono" id="header-balance">$— USD</p>
+          </div>
+          <button class="btn btn-ghost" onclick="openSettings()">Settings</button>
+          <button class="btn btn-ghost" onclick="logout()">Sign out</button>
+        </div>
+        <!-- Mobile only: hamburger that opens the same actions in a sheet -->
+        <button id="header-menu-btn" class="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-gray-300 hover:bg-white/5 active:bg-white/10" onclick="toggleHeaderMenu()" aria-label="Open menu">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+      </div>
+      <!-- Mobile-only compact diagnostics row (so the SDK/WS state is still visible on phones) -->
+      <div class="md:hidden max-w-7xl mx-auto px-3 flex items-center gap-3 pb-1 text-[10px] mono text-gray-500">
+        <span id="sdk-debug-m" title="WebRTC SDK diagnostic">sdk:…</span>
+        <span class="ws-status" title="WebSocket event stream" id="ws-status-m"><span class="dot dot-off"></span> <span id="ws-status-text-m">ws:off</span></span>
+        <span class="ml-auto">Balance <span class="text-gray-300 font-semibold mono" id="header-balance-m">$— USD</span></span>
+      </div>
+      <!-- Tab bar — wraps on mobile, scrolls horizontally only if it doesn't fit -->
+      <div class="max-w-7xl mx-auto px-3 sm:px-6 flex gap-1 overflow-x-auto">
+        <div class="tab tab-active shrink-0" data-tab="dialer" onclick="switchTab('dialer')">📞 Softphone</div>
+        <div class="tab shrink-0" data-tab="messages" onclick="switchTab('messages')">💬 Messages<span class="tab-badge hidden" id="messages-badge">0</span></div>
+        <div class="tab shrink-0" data-tab="history" onclick="switchTab('history')">📋 History<span class="tab-badge hidden" id="history-badge">0</span></div>
+        <div class="tab shrink-0" data-tab="recordings" onclick="switchTab('recordings')">🎙️ Recordings<span class="tab-badge tab-badge-accent hidden" id="recordings-badge">0</span></div>
+        <div class="tab shrink-0" data-tab="admin" onclick="switchTab('admin')">⚙️ Admin</div>
+      </div>
+    </header>
+    <!-- Mobile menu sheet (hidden by default, toggled by #header-menu-btn) -->
+    <div id="header-menu" class="hidden fixed inset-0 z-[70] md:hidden" role="dialog" aria-label="Menu">
+      <div class="absolute inset-0 bg-black/60" onclick="toggleHeaderMenu()"></div>
+      <div class="absolute top-0 right-0 w-64 max-w-[80vw] h-full bg-[#0f1018] border-l border-white/10 p-4 flex flex-col gap-2" style="box-shadow: -8px 0 24px rgba(0,0,0,0.6);">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-400">Menu</h3>
+          <button class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:bg-white/5" onclick="toggleHeaderMenu()" aria-label="Close menu">✕</button>
+        </div>
+        <div class="rounded-lg p-3 bg-white/5">
+          <p class="text-[10px] uppercase tracking-widest text-gray-500">Balance</p>
+          <p class="text-xl font-bold mono" id="header-balance-sheet">$— USD</p>
+        </div>
+        <button class="btn btn-ghost justify-start text-left" onclick="openSettings(); toggleHeaderMenu();">⚙️  Settings</button>
+        <button class="btn btn-ghost justify-start text-left" onclick="logout(); toggleHeaderMenu();">⎋  Sign out</button>
+        <div class="mt-auto text-[10px] text-gray-500 mono">v0.4.4 · <span id="user-label-sheet">agent</span></div>
+      </div>
+    </div>
+
+    <main class="max-w-7xl mx-auto px-6 py-6 flex-1 w-full">
+
+      <!-- DIALER TAB -->
+      <section id="tab-dialer" class="tab-pane">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Active call card (or dialer) -->
+          <div class="lg:col-span-2 space-y-4">
+            <!-- IDLE: dial pad (v0.4.2 â€” phone-style, responsive, circular keys) -->
+            <div id="dialer-card" class="panel p-4 sm:p-6">
+              <div class="flex items-center justify-between mb-3 sm:mb-4 gap-2">
+                <h3 class="font-semibold flex items-center gap-2 text-sm sm:text-base">
+                  <span class="dot dot-on"></span>
+                  Place a call
+                </h3>
+                <!-- From selector â€” hidden on mobile, expanded on desktop -->
+                <label class="hidden md:flex items-center gap-2 text-xs text-gray-500">
+                  <span>From:</span>
+                  <select id="caller-number" class="text-xs py-1 px-2" style="width: auto;">
+                    <option value="+15078731084" selected>+1 507 873 1084 (clean line Â· default)</option>
+                    <option value="+13079999692">+1 307 999 9692 (W3J LLC)</option>
+                    <option value="+13204280793">+1 320 428 0793 (Bijou)</option>
+                    <option value="+18444618814">+1 844 461 8814 (Personal Twin Â· has AI)</option>
+                  </select>
+                </label>
+              </div>
+              <!-- Mobile-only compact "From" pill (tap to cycle numbers) -->
+              <div class="md:hidden mb-2 flex items-center justify-center">
+                <button id="caller-pill" type="button" onclick="cycleCallerOnMobile()"
+                        class="text-[11px] mono text-gray-400 bg-white/5 border border-white/10 rounded-full px-3 py-1 flex items-center gap-1.5 active:scale-95 transition">
+                  <span>From</span>
+                  <span id="caller-pill-num" class="text-gray-200">+1 507 873 1084</span>
+                  <span class="text-gray-500">â†»</span>
+                </button>
+              </div>
+              <div class="mb-3 sm:mb-4">
+                <input id="number-input" type="tel" inputmode="tel" autocomplete="off" placeholder="+1 555 123 4567"
+                       class="w-full text-xl sm:text-2xl mono text-center py-3 sm:py-4 bg-transparent" style="letter-spacing: 0.04em;" />
+              </div>
+              <!-- Phone-style circular keypad: 4 rows Ã— 3 cols, last row = *,0,âŒ« ; then big green call button -->
+              <div id="dialer-keypad" class="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[340px] mx-auto mb-4 select-none">
+                <button type="button" class="keypad-key" data-digit="1" aria-label="1">1<span class="sub">&nbsp;</span></button>
+                <button type="button" class="keypad-key" data-digit="2" aria-label="2">2<span class="sub">ABC</span></button>
+                <button type="button" class="keypad-key" data-digit="3" aria-label="3">3<span class="sub">DEF</span></button>
+                <button type="button" class="keypad-key" data-digit="4" aria-label="4">4<span class="sub">GHI</span></button>
+                <button type="button" class="keypad-key" data-digit="5" aria-label="5">5<span class="sub">JKL</span></button>
+                <button type="button" class="keypad-key" data-digit="6" aria-label="6">6<span class="sub">MNO</span></button>
+                <button type="button" class="keypad-key" data-digit="7" aria-label="7">7<span class="sub">PQRS</span></button>
+                <button type="button" class="keypad-key" data-digit="8" aria-label="8">8<span class="sub">TUV</span></button>
+                <button type="button" class="keypad-key" data-digit="9" aria-label="9">9<span class="sub">WXYZ</span></button>
+                <button type="button" class="keypad-key" data-digit="*" aria-label="star">*<span class="sub">&nbsp;</span></button>
+                <button type="button" class="keypad-key" data-digit="0" aria-label="0">0<span class="sub">+</span></button>
+                <button type="button" class="keypad-key" data-digit="#" aria-label="hash">#<span class="sub">&nbsp;</span></button>
+              </div>
+              <!-- Action row: clear Â· green call Â· backspace (iOS-style) -->
+              <div class="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[340px] mx-auto items-center">
+                <button type="button" class="keypad-action keypad-back text-xs uppercase tracking-wider font-semibold" onclick="dialPad('clear')" aria-label="Clear number">clear</button>
+                <button type="button" class="keypad-action keypad-call text-3xl" id="call-btn" onclick="placeCall()" aria-label="Place call">ðŸ“ž</button>
+                <button type="button" class="keypad-action keypad-back text-2xl" id="backspace-btn" aria-label="Backspace">âŒ«</button>
+              </div>
+            </div>
+
+            <!-- ACTIVE CALL: call card -->
+            <div id="call-card" class="panel p-6 call-card-active hidden">
+              <div class="flex items-start justify-between mb-4">
+                <div>
+                  <p class="text-xs text-gray-400 mb-1">Connected to</p>
+                  <p class="text-2xl font-bold mono" id="call-remote">+1 555 123 4567</p>
+                  <p class="text-sm text-gray-400 mt-1" id="call-direction">Outgoing call</p>
+                </div>
+                <div class="text-right">
+                  <p class="text-xs text-gray-400">Duration</p>
+                  <p class="text-3xl font-bold mono" id="call-timer">00:00</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 mb-4">
+                <span class="pill pill-on"><span class="dot dot-on"></span> <span id="call-state">Connected</span></span>
+              </div>
+              <div class="grid grid-cols-3 gap-2 mb-2">
+                <button class="btn btn-ghost" id="mute-btn" onclick="toggleMute()">
+                  <span id="mute-icon">ðŸŽ™ï¸</span> <span id="mute-label">Mute</span>
+                </button>
+                <button class="btn btn-ghost" id="hold-btn" onclick="holdCall()">
+                  <span id="hold-icon">â¸ï¸</span> <span id="hold-label">Hold</span>
+                </button>
+                <button class="btn btn-ghost" id="keypad-btn" onclick="toggleKeypad()">
+                  âŒ¨ï¸ Keypad
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <button class="btn btn-ghost" id="transfer-btn" onclick="transferCall()">
+                  ðŸ” Transfer
+                </button>
+                <button class="btn btn-danger" id="hangup-btn" onclick="hangupCall()">
+                  ðŸ“µ Hang up
+                </button>
+              </div>
+              <!-- DTMF keypad (hidden by default) -->
+              <div id="dtmf-pad" class="hidden mt-4 grid grid-cols-3 gap-2 max-w-xs">
+                <div class="keypad-key" onclick="sendDTMF('1')">1</div>
+                <div class="keypad-key" onclick="sendDTMF('2')">2</div>
+                <div class="keypad-key" onclick="sendDTMF('3')">3</div>
+                <div class="keypad-key" onclick="sendDTMF('4')">4</div>
+                <div class="keypad-key" onclick="sendDTMF('5')">5</div>
+                <div class="keypad-key" onclick="sendDTMF('6')">6</div>
+                <div class="keypad-key" onclick="sendDTMF('7')">7</div>
+                <div class="keypad-key" onclick="sendDTMF('8')">8</div>
+                <div class="keypad-key" onclick="sendDTMF('9')">9</div>
+                <div class="keypad-key" onclick="sendDTMF('*')">*</div>
+                <div class="keypad-key" onclick="sendDTMF('0')">0</div>
+                <div class="keypad-key" onclick="sendDTMF('#')">#</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Side: status + recents -->
+          <div class="space-y-4">
+            <div class="panel p-5">
+              <h3 class="font-semibold mb-3">Agent status</h3>
+              <div class="grid grid-cols-2 gap-2">
+                <button class="btn btn-ghost active" data-status="available" onclick="setAgentStatus('available')">Available</button>
+                <button class="btn btn-ghost" data-status="away" onclick="setAgentStatus('away')">Away</button>
+                <button class="btn btn-ghost" data-status="busy" onclick="setAgentStatus('busy')">Busy</button>
+                <button class="btn btn-ghost" data-status="break" onclick="setAgentStatus('break')">On break</button>
+              </div>
+            </div>
+
+            <div class="panel p-5">
+              <h3 class="font-semibold mb-3">Recent calls <span class="text-xs text-gray-500">(click to call back)</span></h3>
+              <div id="dialer-recent" class="space-y-1 text-sm scroll-y" style="max-height: 280px;">
+                <p class="text-xs text-gray-500">Loadingâ€¦</p>
+              </div>
+            </div>
+
+            <div class="panel p-5">
+              <h3 class="font-semibold mb-3">Telephony numbers</h3>
+              <div id="dialer-numbers" class="space-y-1 text-sm">
+                <p class="text-xs text-gray-500">Loadingâ€¦</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MESSAGES TAB -->
+      <section id="tab-messages" class="tab-pane hidden">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 h-[calc(100vh-220px)]">
+          <!-- Threads list -->
+          <div class="panel p-0 overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-gray-800 flex items-center justify-between">
+              <h3 class="font-semibold">Threads</h3>
+              <button class="btn btn-ghost" onclick="loadThreads()">â†»</button>
+            </div>
+            <div id="threads-list" class="flex-1 overflow-y-auto">
+              <p class="p-4 text-xs text-gray-500">Loadingâ€¦</p>
+            </div>
+          </div>
+          <!-- Thread view -->
+          <div class="md:col-span-2 panel p-0 overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-gray-800 flex items-center justify-between">
+              <div>
+                <h3 class="font-semibold mono" id="thread-remote">Select a thread</h3>
+                <p class="text-xs text-gray-500" id="thread-meta">â€”</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <select id="msg-from" class="text-xs py-1 px-2" style="width: auto;">
+                  <option value="+13079999692">+1 307 999 9692</option>
+                  <option value="+13204280793">+1 320 428 0793</option>
+                  <option value="+18444618814">+1 844 461 8814</option>
+                </select>
+              </div>
+            </div>
+            <div id="thread-messages" class="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col">
+              <p class="text-sm text-gray-500 text-center mt-12">Pick a thread from the left, or send a new message below.</p>
+            </div>
+            <div class="p-3 border-t border-gray-800 flex gap-2">
+              <input id="msg-input" type="text" placeholder="Type a messageâ€¦" class="flex-1" onkeydown="if(event.key==='Enter')sendSms()" />
+              <button class="btn btn-primary" onclick="sendSms()">Send</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HISTORY TAB -->
+      <section id="tab-history" class="tab-pane hidden">
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold">Call history <span class="text-xs text-gray-500">(click to call back)</span></h3>
+            <button class="btn btn-ghost" onclick="loadHistory()">â†» refresh</button>
+          </div>
+          <div class="flex gap-2 mb-3 flex-wrap" id="history-filters">
+            <button class="filter-chip active" data-filter="all" onclick="filterHistory('all')">All</button>
+            <button class="filter-chip" data-filter="missed" onclick="filterHistory('missed')">Missed</button>
+            <button class="filter-chip" data-filter="outbound" onclick="filterHistory('outbound')">Outbound</button>
+            <button class="filter-chip" data-filter="inbound" onclick="filterHistory('inbound')">Inbound</button>
+          </div>
+          <div id="history-table-wrap" class="scroll-y" style="max-height: 600px;">
+            <table>
+              <thead><tr><th>When</th><th>From</th><th>To</th><th>Event</th><th></th></tr></thead>
+              <tbody id="history-table"><tr><td colspan="5" class="text-gray-500 text-center py-8">Loadingâ€¦</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- RECORDINGS TAB -->
+      <section id="tab-recordings" class="tab-pane hidden">
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold">Recent recordings</h3>
+            <button class="btn btn-ghost" onclick="loadRecordings()">â†» refresh</button>
+          </div>
+          <div id="recordings-list" class="space-y-3 scroll-y" style="max-height: 600px;">
+            <p class="text-sm text-gray-500">Loadingâ€¦</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ADMIN TAB (numbers, agents, state) -->
+      <section id="tab-admin" class="tab-pane hidden">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="panel p-5">
+            <h3 class="font-semibold mb-3">Owned numbers</h3>
+            <div id="admin-numbers" class="space-y-2 text-sm">Loadingâ€¦</div>
+          </div>
+          <div class="panel p-5">
+            <h3 class="font-semibold mb-3">AI agents <span class="text-xs text-gray-500">(20 of 36 curated)</span></h3>
+            <div id="admin-agents" class="space-y-2 text-sm scroll-y" style="max-height: 400px;">Loadingâ€¦</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- INCOMING CALL MODAL (v0.3.0) -->
+  <div id="incoming-modal" class="hidden fixed inset-0 z-50 incoming-modal-bg flex items-center justify-center p-4">
+    <div class="incoming-card">
+      <div class="incoming-avatar" id="incoming-avatar">?</div>
+      <p class="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Incoming call</p>
+      <h2 class="incoming-caller-name" id="incoming-name">Unknown caller</h2>
+      <p class="incoming-caller-num" id="incoming-number">â€”</p>
+      <p class="text-xs text-gray-500 mt-2 mono" id="incoming-callid"></p>
+      <div class="incoming-actions">
+        <button class="incoming-action-btn incoming-decline" onclick="declineIncomingCall()" title="Decline" aria-label="Decline">ðŸ“µ</button>
+        <button class="incoming-action-btn incoming-accept" onclick="acceptIncomingCall()" title="Accept" aria-label="Accept">ðŸ“ž</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PERSISTENT CALL BAR (v0.4.2) â€” always-visible strip on mobile when a call is pending or active -->
+  <div id="call-bar" class="call-bar hidden" role="region" aria-label="Active call controls">
+    <div class="call-bar-pulse" id="call-bar-pulse"></div>
+    <div class="call-bar-info">
+      <div class="call-bar-label" id="call-bar-label">Incoming call</div>
+      <div class="call-bar-number" id="call-bar-number">â€”</div>
+    </div>
+    <div class="call-bar-actions">
+      <button class="call-bar-btn call-bar-accept hidden" id="call-bar-accept" onclick="acceptIncomingCall()" title="Accept" aria-label="Accept call">ðŸ“ž</button>
+      <button class="call-bar-btn call-bar-decline" id="call-bar-decline" onclick="endOrDeclineCall()" title="End call" aria-label="Decline or end call">ðŸ“µ</button>
+      <button class="call-bar-btn call-bar-open hidden" id="call-bar-open" onclick="openActiveCallFromBar()" title="Open" aria-label="Open call details">â¤´</button>
+    </div>
+  </div>
+
+  <!-- Toast stack (top-right slide-in) -->
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <!-- Ringtone audio (small generated PCM wav, plays on call.incoming) -->
+  <audio id="ringtone-audio" preload="auto" loop></audio>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 modal-bg flex items-center justify-center p-4">
+    <div class="panel max-w-lg w-full p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold">Settings</h3>
+        <button class="btn btn-ghost" onclick="closeSettings()">Ã—</button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs text-gray-400 mb-1 block">Telnyx WebRTC login (username)</label>
+          <input id="settings-login" type="text" placeholder="username from Telnyx Mission Control â†’ Voice â†’ WebRTC" />
+          <p class="text-xs text-gray-500 mt-1">Create at <a href="https://portal.telnyx.com" class="text-accent" style="color: var(--accent)">portal.telnyx.com</a> â†’ Voice â†’ SIP â†’ WebRTC credentials.</p>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 mb-1 block">Telnyx WebRTC password</label>
+          <input id="settings-password" type="password" placeholder="credential password" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 mb-1 block">Caller number (default)</label>
+          <select id="settings-caller" class="text-sm py-2 px-3">
+            <option value="+13079999692">+1 307 999 9692 (W3J LLC)</option>
+            <option value="+13204280793">+1 320 428 0793 (Bijou)</option>
+            <option value="+18444618814">+1 844 461 8814 (Personal Twin)</option>
+          </select>
+        </div>
+        <div class="flex items-center justify-between pt-2 border-t border-gray-800">
+          <button class="btn btn-ghost" onclick="testConnection()">Test connection</button>
+          <div class="flex gap-2">
+            <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+          </div>
+        </div>
+        <div id="settings-status" class="text-xs"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIG
+    // ============================================================
+    const API_BASE = "https://bk-jr-api.aixlabs.fun";
+    const API_PREFIX = "/api";
+
+    // ============================================================
+    // FSM (Finite State Machine) â€” inspired by ominicontacto
+    // Simplified to 6 states: Initial â†’ Connecting â†’ Ready â†’ Dialing â†’ OnCall â†’ OnHold â†’ ReceivingCall
+    // ============================================================
+    const fsm = (() => {
+      const transitions = {
+        'connect': { from: ['Initial'], to: 'Connecting' },
+        'connectOk': { from: ['Connecting'], to: 'Ready' },
+        'connectFail': { from: ['Connecting'], to: 'Disconnected' },
+        'disconnect': { from: ['Ready', 'OnCall', 'OnHold', 'Dialing'], to: 'Disconnected' },
+        'reconnect': { from: ['Disconnected'], to: 'Connecting' },
+        'dial': { from: ['Ready'], to: 'Dialing' },
+        'remoteAnswer': { from: ['Dialing', 'ReceivingCall'], to: 'OnCall' },
+        'remoteHangup': { from: ['OnCall', 'OnHold', 'Dialing', 'ReceivingCall'], to: 'Ready' },
+        'incomingCall': { from: ['Ready'], to: 'ReceivingCall' },
+        'hold': { from: ['OnCall'], to: 'OnHold' },
+        'unhold': { from: ['OnHold'], to: 'OnCall' },
+        'localHangup': { from: ['Dialing', 'OnCall', 'OnHold'], to: 'Ready' },
+        'mute': { from: ['OnCall'], to: 'OnCall' },
+      };
+      let state = 'Initial';
+      const listeners = {};
+      return {
+        get state() { return state; },
+        fire(event) {
+          const t = transitions[event];
+          if (!t) { console.warn('No transition for event:', event); return false; }
+          if (!t.from.includes(state)) { console.warn(`Event ${event} not allowed from ${state}`); return false; }
+          const prev = state;
+          state = t.to;
+          console.log(`FSM: ${prev} --[${event}]--> ${state}`);
+          (listeners[state] || []).forEach(fn => fn({ from: prev, to: state, event }));
+          (listeners['*'] || []).forEach(fn => fn({ from: prev, to: state, event }));
+          return true;
+        },
+        on(event, fn) {
+          if (!listeners[event]) listeners[event] = [];
+          listeners[event].push(fn);
+        }
+      };
+    })();
+
+    // ============================================================
+    // FSM LISTENERS â€” v0.3.0 side-effects
+    // (Declared before the WebRTC client so they're in scope for any state change.)
+    // ============================================================
+    function updateHoldLabel() {
+      const btn = document.getElementById('hold-btn');
+      if (!btn) return;
+      const icon = document.getElementById('hold-icon');
+      const label = document.getElementById('hold-label');
+      const onHold = fsm.state === 'OnHold';
+      if (icon) icon.textContent = onHold ? 'â–¶ï¸' : 'â¸ï¸';
+      if (label) label.textContent = onHold ? 'Resume' : 'Hold';
+    }
+    function updateCallCardStyle() {
+      const card = document.getElementById('call-card');
+      if (!card) return;
+      card.classList.remove('call-card-active', 'call-card-incoming', 'call-card-dialing');
+      if (fsm.state === 'OnCall' || fsm.state === 'OnHold') card.classList.add('call-card-active');
+      else if (fsm.state === 'ReceivingCall') card.classList.add('call-card-incoming');
+      else if (fsm.state === 'Dialing') card.classList.add('call-card-dialing');
+    }
+    function updateInCallButtons() {
+      // In-call controls only show while the call is actually up. During
+      // Dialing/ReceivingCall, only Hang up is available.
+      const inCall = fsm.state === 'OnCall' || fsm.state === 'OnHold';
+      const ids = ['mute-btn', 'hold-btn', 'keypad-btn', 'transfer-btn', 'dtmf-pad'];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !inCall);
+      });
+    }
+
+    fsm.on('*', (e) => {
+      // Call timer
+      if (e.to === 'OnCall') view.startTimer();
+      if (e.to === 'OnHold')  view.pauseTimer();
+      if (e.to === 'Ready' || e.to === 'Disconnected') view.stopTimer();
+
+      // Audio: ringback while dialing, stop on answer
+      if (e.to === 'Dialing')         audio.startRingback();
+      if (e.to === 'OnCall')          audio.stopRingback();
+      if (e.to === 'Ready' || e.to === 'Disconnected') audio.stopRingback();
+
+      // Audio: ringtone on incoming, stop on answer/decline
+      if (e.to === 'ReceivingCall')   audio.startRingtone();
+      if (e.to === 'OnCall')          audio.stopRingtone();
+      if (e.from === 'ReceivingCall' && e.to === 'Ready') {
+        audio.stopRingtone();
+        // Missed call (remote hung up before user answered)
+        registerMissedCall();
+        hideCallBar();
+      }
+      if (e.from === 'ReceivingCall' && e.to !== 'OnCall') {
+        audio.stopRingtone();
+      }
+
+      // Hold label
+      if (e.to === 'OnCall' || e.to === 'OnHold') updateHoldLabel();
+
+      // Mute / Hold / Keypad / Transfer button visibility
+      updateInCallButtons();
+      updateCallCardStyle();
+
+      // Persistent call bar (v0.4.2) â€” refresh on every FSM transition so it
+      // stays in sync with the actual call state on mobile.
+      try { updateCallBar(); } catch (e) { /* bar not yet in DOM */ }
+    });
+
+    // ============================================================
+    // VIEW
+    // ============================================================
+    const view = {
+      setStatus(state) {
+        const pill = document.getElementById('status-pill');
+        const dot = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        pill.className = 'ml-3 pill';
+        if (state === 'Ready' || state === 'OnCall') {
+          pill.classList.add('pill-on');
+          dot.className = 'dot dot-on';
+        } else if (state === 'Connecting' || state === 'Dialing' || state === 'OnHold' || state === 'ReceivingCall') {
+          pill.classList.add('pill-warn');
+          dot.className = 'dot dot-warn';
+        } else {
+          pill.classList.add('pill-off');
+          dot.className = 'dot dot-off';
+        }
+        const labels = {
+          'Initial': 'Initializingâ€¦',
+          'Connecting': 'Connectingâ€¦',
+          'Ready': 'Ready',
+          'Dialing': 'Dialingâ€¦',
+          'OnCall': 'On call',
+          'OnHold': 'On hold',
+          'ReceivingCall': 'Incomingâ€¦',
+          'Disconnected': 'Disconnected',
+        };
+        text.textContent = labels[state] || state;
+      },
+
+      setRemote(remote) {
+        document.getElementById('call-remote').textContent = remote;
+      },
+
+      setCallState(state) {
+        document.getElementById('call-state').textContent = state;
+      },
+
+      showCallCard(remote, direction) {
+        document.getElementById('dialer-card').classList.add('hidden');
+        document.getElementById('call-card').classList.remove('hidden');
+        this.setRemote(remote);
+        document.getElementById('call-direction').textContent = direction;
+        // Don't auto-start the timer here. FSM listener fires it when entering OnCall.
+        // Reset the displayed counter so the user sees 00:00 while dialing/ringing.
+        const t = document.getElementById('call-timer');
+        if (t) t.textContent = '00:00';
+      },
+
+      showDialer() {
+        document.getElementById('call-card').classList.add('hidden');
+        document.getElementById('dialer-card').classList.remove('hidden');
+        document.getElementById('dialer-card').classList.add('ringing');  // for incoming ring effect reset
+        this.stopTimer();
+      },
+
+      // Call timer â€” starts on OnCall, pauses on OnHold, resets on Ready/hangup.
+      _timer: null,
+      _startTime: null,
+      _accumulated: 0,        // seconds accumulated before a hold
+      startTimer() {
+        // Begin ticking from the current accumulated offset.
+        this._startTime = Date.now() - (this._accumulated * 1000);
+        if (this._timer) clearInterval(this._timer);
+        const update = () => {
+          const elapsed = Math.floor((Date.now() - this._startTime) / 1000);
+          const m = Math.floor(elapsed / 60);
+          const s = elapsed % 60;
+          const t = document.getElementById('call-timer');
+          if (t) t.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        };
+        update();
+        this._timer = setInterval(update, 1000);
+      },
+      pauseTimer() {
+        // Capture elapsed up to now, then stop the interval. Display stays put.
+        if (this._timer) {
+          this._accumulated = Math.floor((Date.now() - this._startTime) / 1000);
+          clearInterval(this._timer);
+          this._timer = null;
+        }
+      },
+      stopTimer() {
+        if (this._timer) { clearInterval(this._timer); this._timer = null; }
+        this._accumulated = 0;
+        const t = document.getElementById('call-timer');
+        if (t) t.textContent = '00:00';
+      },
+
+      setMuted(muted) {
+        document.getElementById('mute-icon').textContent = muted ? 'ðŸ”‡' : 'ðŸŽ™ï¸';
+        document.getElementById('mute-label').textContent = muted ? 'Unmute' : 'Mute';
+        document.getElementById('mute-btn').classList.toggle('active', muted);
+      },
+    };
+
+    // ============================================================
+    // v0.3.0 â€” AUDIO (Web Audio API, no external assets)
+    // ============================================================
+    const audio = (() => {
+      let ctx = null;
+      let ringbackTimer = null;
+      let ringtoneTimer = null;
+      function getCtx() {
+        if (!ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) {
+            try { ctx = new AC(); } catch (e) { console.warn('AudioContext init failed', e); }
+          }
+        }
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume().catch(() => { /* user gesture needed */ });
+        }
+        return ctx;
+      }
+      function playTone(freq, duration, gain = 0.18, type = 'sine') {
+        const c = getCtx();
+        if (!c) return;
+        const osc = c.createOscillator();
+        const g = c.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.connect(g).connect(c.destination);
+        const now = c.currentTime;
+        g.gain.setValueAtTime(0, now);
+        g.gain.linearRampToValueAtTime(gain, now + 0.01);
+        g.gain.setValueAtTime(gain, now + Math.max(0.01, duration - 0.04));
+        g.gain.linearRampToValueAtTime(0, now + duration);
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+      }
+      // DTMF standard frequency grid (low row x high column)
+      const DTMF = {
+        '1': [697, 1209], '2': [697, 1336], '3': [697, 1477], 'A': [697, 1633],
+        '4': [770, 1209], '5': [770, 1336], '6': [770, 1477], 'B': [770, 1633],
+        '7': [852, 1209], '8': [852, 1336], '9': [852, 1477], 'C': [852, 1633],
+        '*': [941, 1209], '0': [941, 1336], '#': [941, 1477], 'D': [941, 1633],
+      };
+      function playDTMF(key) {
+        const freqs = DTMF[key];
+        if (!freqs) return;
+        getCtx();
+        playTone(freqs[0], 0.12, 0.12);
+        playTone(freqs[1], 0.12, 0.12);
+      }
+      // Ringback (dialing): single 480Hz tone, two short beeps then silence â€” US style
+      function startRingback() {
+        stopRingback();
+        const cycle = () => {
+          if (!ringbackTimer) return;
+          playTone(480, 0.5, 0.2);
+          ringbackTimer = setTimeout(() => {
+            if (!ringbackTimer) return;
+            playTone(480, 0.5, 0.2);
+            ringbackTimer = setTimeout(cycle, 2400);
+          }, 600);
+        };
+        cycle();
+      }
+      function stopRingback() {
+        if (ringbackTimer) { clearTimeout(ringbackTimer); ringbackTimer = null; }
+      }
+      // Ringtone (incoming): dual 440/480Hz, 1s on / 2s off â€” distinct from ringback
+      function startRingtone() {
+        stopRingtone();
+        const cycle = () => {
+          if (!ringtoneTimer) return;
+          playTone(440, 1.0, 0.2);
+          playTone(480, 1.0, 0.2);
+          ringtoneTimer = setTimeout(cycle, 3000);
+        };
+        cycle();
+      }
+      function stopRingtone() {
+        if (ringtoneTimer) { clearTimeout(ringtoneTimer); ringtoneTimer = null; }
+      }
+      // Prime the AudioContext on first user gesture
+      function prime() { getCtx(); }
+      return { playDTMF, startRingback, stopRingback, startRingtone, stopRingtone, prime, getCtx };
+    })();
+
+    // ============================================================
+    // v0.3.0 â€” TOAST
+    // ============================================================
+    function toast(message, type = 'info', ttl = 2800) {
+      let wrap = document.getElementById('toast-wrap');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = 'toast-wrap';
+        document.body.appendChild(wrap);
+      }
+      const el = document.createElement('div');
+      el.className = 'toast' + (type === 'error' ? ' toast-error' : '');
+      el.textContent = message;
+      wrap.appendChild(el);
+      setTimeout(() => el.classList.add('toast-out'), ttl - 400);
+      setTimeout(() => el.remove(), ttl);
+    }
+
+    // ============================================================
+    // v0.3.0 â€” EMPTY STATE HELPER
+    // ============================================================
+    function emptyState(icon, title, subtitle = '') {
+      return `<div class="empty-state">
+        <div class="empty-state-icon">${icon}</div>
+        <p class="empty-state-title">${escapeHtml(title)}</p>
+        ${subtitle ? `<p class="empty-state-subtitle">${escapeHtml(subtitle)}</p>` : ''}
+      </div>`;
+    }
+
+    // ============================================================
+    // v0.3.0 â€” TAB BADGES (Messages / History / Recordings)
+    // ============================================================
+    let unreadSmsCount = 0;
+    let newRecordingsCount = 0;
+    function setTabBadge(id, n, accent) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (n > 0) {
+        el.textContent = n > 99 ? '99+' : String(n);
+        el.classList.remove('hidden');
+        el.classList.toggle('tab-badge-accent', !!accent);
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+    function updateMessagesBadge() { setTabBadge('messages-badge', unreadSmsCount); }
+    function updateHistoryBadge()  { setTabBadge('history-badge', missedCallCount); }
+    function updateRecordingsBadge() { setTabBadge('recordings-badge', newRecordingsCount, true); }
+
+    // ============================================================
+    // v0.3.0 â€” MISSED CALL TRACKING
+    // ============================================================
+    let missedCallCount = 0;
+    let missedCallNumbers = new Set();
+    try {
+      const persisted = JSON.parse(localStorage.getItem('w3j_missed_calls') || '{}');
+      missedCallCount = persisted.count || 0;
+      missedCallNumbers = new Set(persisted.numbers || []);
+    } catch (e) { /* ignore */ }
+    function persistMissed() {
+      try {
+        localStorage.setItem('w3j_missed_calls', JSON.stringify({
+          count: missedCallCount,
+          numbers: Array.from(missedCallNumbers),
+        }));
+      } catch (e) { /* ignore */ }
+    }
+    function registerMissedCall() {
+      const remote = document.getElementById('call-remote');
+      if (remote && remote.textContent) missedCallNumbers.add(remote.textContent.trim());
+      missedCallCount++;
+      persistMissed();
+      updateHistoryBadge();
+    }
+    function clearMissed() {
+      missedCallCount = 0;
+      missedCallNumbers = new Set();
+      persistMissed();
+      updateHistoryBadge();
+    }
+
+    // ============================================================
+    // WEBRTC CLIENT (Telnyx)
+    // ============================================================
+    let telnyxClient = null;
+    let activeCall = null;
+    let settings = { login: '', password: '', caller: '+13079999692' };
+
+    function loadSettings() {
+      try {
+        const s = JSON.parse(localStorage.getItem('w3j_softphone_settings') || '{}');
+        settings = { ...settings, ...s };
+        document.getElementById('caller-number').value = settings.caller || '+13079999692';
+        document.getElementById('settings-login').value = settings.login || '';
+        document.getElementById('settings-password').value = settings.password || '';
+        document.getElementById('settings-caller').value = settings.caller || '+13079999692';
+      } catch (e) { console.warn('Settings load failed:', e); }
+    }
+
+    // Auto-fetch WebRTC credentials from the server (no manual paste needed)
+    async function autoFetchCredentials() {
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/webrtc/credentials`);
+        const d = await r.json();
+        if (d.ok && d.login && d.password) {
+          settings.login = d.login;
+          settings.password = d.password;
+          if (d.connection_id) settings.connectionId = d.connection_id;
+          localStorage.setItem('w3j_softphone_settings', JSON.stringify(settings));
+          document.getElementById('settings-login').value = settings.login;
+          document.getElementById('settings-password').value = settings.password;
+          console.log('WebRTC credentials auto-loaded from server');
+          return true;
+        }
+        console.warn('No server-side WebRTC credentials:', d.error);
+        return false;
+      } catch (e) {
+        console.warn('Auto-fetch failed:', e);
+        return false;
+      }
+    }
+
+    function saveSettings() {
+      settings.login = document.getElementById('settings-login').value.trim();
+      settings.password = document.getElementById('settings-password').value;
+      settings.caller = document.getElementById('settings-caller').value;
+      localStorage.setItem('w3j_softphone_settings', JSON.stringify(settings));
+      document.getElementById('settings-status').innerHTML = '<span style="color: var(--accent)">Saved.</span>';
+      setTimeout(closeSettings, 600);
+    }
+
+    function openSettings() { document.getElementById('settings-modal').classList.remove('hidden'); }
+
+    // v0.4.3: Mobile header hamburger menu
+    function toggleHeaderMenu() {
+      const m = document.getElementById('header-menu');
+      if (m) m.classList.toggle('hidden');
+    }
+    function closeSettings() { document.getElementById('settings-modal').classList.add('hidden'); }
+
+    // @telnyx/webrtc 2.x bundle exposes window.TelnyxWebRTC = { TelnyxRTC: <class>, __esModule: true }.
+    // The class is at .TelnyxRTC (named export), NOT .Client.
+    function getTelnyxSDK() {
+      if (typeof window === 'undefined') return null;
+      const sdk = window.TelnyxWebRTC || window.Telnyx || null;
+      if (!sdk) return null;
+      // Accept either: the bundle's named-export shape { TelnyxRTC } OR a class directly
+      if (typeof sdk === 'function') return sdk;
+      if (sdk.TelnyxRTC) return sdk.TelnyxRTC;
+      return null;
+    }
+
+    // Surface SDK state to the visible UI so we can debug without devtools.
+    function setSdkDebug(msg, color) {
+      ['sdk-debug', 'sdk-debug-m'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.textContent = 'sdk:' + msg;
+          if (color) el.style.color = color;
+        }
+      });
+    }
+
+    // Wait for the bundle to register. Resolves with the SDK class or null on timeout.
+    function waitForTelnyxSDK(timeoutMs = 5000) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        const check = () => {
+          const sdk = getTelnyxSDK();
+          if (sdk) return resolve(sdk);
+          if (Date.now() - start > timeoutMs) return resolve(null);
+          setTimeout(check, 100);
+        };
+        check();
+      });
+    }
+
+    async function initTelnyx() {
+      setSdkDebug('waitingâ€¦', '#888');
+      const TelnyxRTC = await waitForTelnyxSDK();
+      if (!TelnyxRTC) {
+        // Diagnose what's actually on window so we can see why the SDK didn't register
+        const candidates = Object.keys(window).filter(k => /telnyx|webrtc|sip/i.test(k));
+        const bundleEntry = (performance.getEntriesByName && performance.getEntriesByName('https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.8.2/lib/bundle.js')[0]) || null;
+        const trace = window.__bundleTrace || [];
+        const traceSummary = trace.length
+          ? trace[trace.length - 1].hasTelnyxWebRTC ? 'has global' : 'no global'
+          : 'no trace';
+        const errMsg = 'NOT LOADED' + ' trace=' + traceSummary + ' onload=' + (!!window.__telnyxBundleLoaded) + ' samples=' + trace.length;
+        setSdkDebug(errMsg.slice(0, 60), '#f55');
+        console.error('@telnyx/webrtc SDK not loaded.',
+                      'Trace (last 5):', trace.slice(-5),
+                      'Telnyx-like globals on window:', candidates,
+                      'Bundle perf entry:', bundleEntry ? `${bundleEntry.responseStatus} ${bundleEntry.duration}ms transferSize=${bundleEntry.transferSize}` : 'NOT FOUND');
+        view.setStatus('Disconnected');
+        return false;
+      }
+      if (!settings.login || !settings.password) {
+        console.warn('No WebRTC credentials configured. Open Settings to add them.');
+        setSdkDebug('SDK ok, no creds', '#fa3');
+        view.setStatus('Disconnected');
+        return false;
+      }
+      try {
+        setSdkDebug('connectingâ€¦', '#fa3');
+        // FSM: Initial -> Connecting (use 'connect', not 'reconnect' which only fires from Disconnected)
+        fsm.fire('connect');
+        view.setStatus(fsm.state);
+        telnyxClient = new TelnyxRTC({
+          login: settings.login,
+          password: settings.password,
+        });
+        // Wire up events
+        telnyxClient.on('telnyx.ready', () => {
+          console.log('Telnyx: ready');
+          fsm.fire('connectOk');
+          setSdkDebug('ready âœ“', '#0f8');
+          view.setStatus(fsm.state);
+        });
+        telnyxClient.on('telnyx.error', (err) => {
+          console.error('Telnyx error:', err);
+          fsm.fire('connectFail');
+          setSdkDebug('error: ' + (err && err.message || JSON.stringify(err)).slice(0, 40), '#f55');
+          view.setStatus(fsm.state);
+        });
+        telnyxClient.on('telnyx.notification', (n) => {
+          console.log('Telnyx notification:', n);
+          handleTelnyxNotification(n);
+        });
+        telnyxClient.connect();
+        return true;
+      } catch (e) {
+        console.error('Failed to init Telnyx:', e);
+        setSdkDebug('init failed', '#f55');
+        fsm.fire('connectFail');
+        view.setStatus(fsm.state);
+        return false;
+      }
+    }
+
+    async function testConnection() {
+      const ok = await initTelnyx();
+      if (ok) {
+        document.getElementById('settings-status').innerHTML = '<span style="color: var(--accent)">Connection initiated. Watch the status pill in the header.</span>';
+      } else {
+        document.getElementById('settings-status').innerHTML = '<span style="color: var(--danger)">SDK not loaded or missing credentials.</span>';
+      }
+    }
+
+    function handleTelnyxNotification(n) {
+      // n.type can be "callUpdate", "userMediaError", etc.
+      if (n.type === 'callUpdate' && n.call) {
+        const call = n.call;
+        const state = call.state;
+        // Telnyx Verto states: new, trying, ringing, early, active, confirmed, terminated/destroy/hangup
+        if (state === 'ringing') {
+          // Inbound ringing â€” only fire if we're not already in a call
+          if (fsm.state === 'Ready' || fsm.state === 'Initial') {
+            activeCall = call;
+            fsm.fire('incomingCall');
+            view.setStatus(fsm.state);
+            const remote = call.options?.remoteCallerNumber || call.parameters?.From || 'Unknown';
+            view.showCallCard(remote, 'Incoming call');
+            view.setCallState('Ringing â€” answer in another tab or wait');
+          }
+        } else if (state === 'active' || state === 'confirmed' || state === 'early') {
+          // Call answered. Only fire from Dialing or ReceivingCall (FSM allows remoteAnswer from those).
+          if (fsm.state === 'Dialing' || fsm.state === 'ReceivingCall') {
+            activeCall = call;
+            fsm.fire('remoteAnswer');
+            view.setStatus(fsm.state);
+          }
+        } else if (state === 'destroy' || state === 'hangup' || state === 'terminated' || state === 'purge') {
+          // Call ended. Only fire remoteHangup if FSM is in a state that has an active call.
+          if (fsm.state === 'Dialing' || fsm.state === 'OnCall' || fsm.state === 'OnHold' || fsm.state === 'ReceivingCall') {
+            fsm.fire('remoteHangup');
+            view.setStatus(fsm.state);
+            view.showDialer();
+            activeCall = null;
+          }
+          // If FSM is already in Ready/Initial, the call ended before we knew about it.
+          // Clear any stale activeCall ref but don't fire (would log a "not allowed" warning).
+          if (activeCall === call) activeCall = null;
+        }
+      }
+    }
+
+    // ============================================================
+    // CALL ACTIONS
+    // ============================================================
+    function placeCall() {
+      const number = document.getElementById('number-input').value.trim();
+      if (!number) { alert('Enter a number'); return; }
+      const caller = document.getElementById('caller-number').value;
+      if (!telnyxClient) {
+        alert('Telnyx WebRTC not connected. Click Settings â†’ add credentials â†’ Test connection.');
+        return;
+      }
+      try {
+        fsm.fire('dial');
+        view.setStatus(fsm.state);
+        view.showCallCard(number, 'Outgoing call');
+        view.setCallState('Dialingâ€¦');
+        telnyxClient.newCall({
+          destinationNumber: number,
+          callerNumber: caller,
+        });
+      } catch (e) {
+        console.error('Place call failed:', e);
+        fsm.fire('remoteHangup');
+        view.setStatus(fsm.state);
+        view.showDialer();
+      }
+    }
+
+    function hangupCall() {
+      try {
+        if (activeCall) activeCall.hangup();
+        fsm.fire('localHangup');
+        view.setStatus(fsm.state);
+        view.showDialer();
+        activeCall = null;
+      } catch (e) { console.error('Hangup failed:', e); }
+    }
+
+    function toggleMute() {
+      if (!activeCall) { toast('No active call', 'error'); return; }
+      // Prime audio so future DTMF tones aren't blocked
+      audio.prime();
+      try {
+        const callId = activeCall.id || activeCall.callId;
+        const isMuted = !!(activeCall.muted);
+        if (isMuted) {
+          if (telnyxClient && callId && typeof telnyxClient.unmute === 'function') {
+            telnyxClient.unmute(callId);
+          } else if (typeof activeCall.unmuteAudio === 'function') {
+            activeCall.unmuteAudio();
+          } else {
+            throw new Error('SDK has no unmute method');
+          }
+          view.setMuted(false);
+        } else {
+          if (telnyxClient && callId && typeof telnyxClient.mute === 'function') {
+            telnyxClient.mute(callId);
+          } else if (typeof activeCall.muteAudio === 'function') {
+            activeCall.muteAudio();
+          } else {
+            throw new Error('SDK has no mute method');
+          }
+          view.setMuted(true);
+        }
+      } catch (e) {
+        console.error('Mute failed:', e);
+        toast('Mute failed: ' + e.message, 'error');
+      }
+    }
+
+    function holdCall() {
+      if (!activeCall) return;
+      try {
+        if (fsm.state === 'OnHold') { activeCall.unhold(); fsm.fire('unhold'); }
+        else { activeCall.hold(); fsm.fire('hold'); }
+        view.setStatus(fsm.state);
+        updateHoldLabel();
+      } catch (e) {
+        console.error('Hold failed:', e);
+        toast('Hold failed: ' + e.message, 'error');
+      }
+    }
+
+    function transferCall() {
+      if (!activeCall) { toast('No active call to transfer', 'error'); return; }
+      if (!telnyxClient || typeof telnyxClient.newCall !== 'function') {
+        toast('Transfer unavailable â€” SDK not connected', 'error');
+        return;
+      }
+      const dest = prompt('Transfer to (number):', '');
+      if (dest == null) return;            // cancelled
+      const number = dest.trim();
+      if (!number) { toast('Transfer cancelled â€” empty number', 'error'); return; }
+      try {
+        const callId = activeCall.id || activeCall.callId;
+        // Attended transfer: new call attached to the active one. If the SDK
+        // doesn't accept attachCallId, we still place the call so the user
+        // can verbally announce, then hang up the original.
+        const opts = { destinationNumber: number, callerNumber: settings.caller };
+        if (callId) opts.attachCallId = callId;
+        telnyxClient.newCall(opts);
+        toast('Transferring to ' + number);
+      } catch (e) {
+        console.error('Transfer failed:', e);
+        toast('Transfer failed: ' + e.message, 'error');
+      }
+    }
+
+    function toggleKeypad() {
+      const pad = document.getElementById('dtmf-pad');
+      if (pad) pad.classList.toggle('hidden');
+    }
+
+    function sendDTMF(digit) {
+      // Always play the local tone so the agent hears feedback
+      try { audio.playDTMF(digit); } catch (e) { /* ignore */ }
+      if (!activeCall) return;
+      try {
+        if (typeof activeCall.dtmf === 'function') activeCall.dtmf(digit);
+        else if (telnyxClient && activeCall.id && typeof telnyxClient.dtmf === 'function') {
+          telnyxClient.dtmf(activeCall.id, digit);
+        }
+      } catch (e) { console.error('DTMF failed:', e); }
+    }
+
+    function dialPad(ch) {
+      // Prime audio on first interaction so browsers allow playback later
+      audio.prime();
+      const input = document.getElementById('number-input');
+      if (ch === 'clear') { if (input) input.value = ''; return; }
+      if (!input) return;
+      input.value = (input.value || '') + ch;
+      // Play the DTMF tone for every keypress, even pre-call (so the user
+      // gets audible feedback while dialing â€” like a real phone).
+      try { audio.playDTMF(ch); } catch (e) { /* ignore */ }
+      // If on a call, also send as in-band DTMF
+      if (fsm.state === 'OnCall') sendDTMF(ch);
+    }
+
+    // v0.4.2: Backspace (long-press to clear)
+    let backspaceTimer = null;
+    let backspaceInterval = null;
+    function backspaceOnce() {
+      const input = document.getElementById('number-input');
+      if (!input) return;
+      const v = input.value || '';
+      if (v.length > 0) input.value = v.slice(0, -1);
+      try { audio.playDTMF('*'); } catch (e) {}
+    }
+    function startBackspace() {
+      backspaceOnce();
+      backspaceTimer = setTimeout(() => {
+        backspaceInterval = setInterval(backspaceOnce, 70);
+      }, 450);
+    }
+    function endBackspace() {
+      if (backspaceTimer)  { clearTimeout(backspaceTimer);  backspaceTimer  = null; }
+      if (backspaceInterval) { clearInterval(backspaceInterval); backspaceInterval = null; }
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      const bs = document.getElementById('backspace-btn');
+      if (bs) {
+        bs.addEventListener('mousedown',  startBackspace);
+        bs.addEventListener('mouseup',    endBackspace);
+        bs.addEventListener('mouseleave', endBackspace);
+        bs.addEventListener('touchstart', (e) => { e.preventDefault(); startBackspace(); }, { passive: false });
+        bs.addEventListener('touchend',    endBackspace);
+        bs.addEventListener('touchcancel', endBackspace);
+      }
+    });
+
+    // v0.4.2: Mobile caller cycling (compact "From" pill on small screens)
+    const CALLER_OPTIONS = [
+      { value: '+15078731084', label: '+1 507 873 1084' },
+      { value: '+13079999692', label: '+1 307 999 9692' },
+      { value: '+13204280793', label: '+1 320 428 0793' },
+      { value: '+18444618814', label: '+1 844 461 8814' },
+    ];
+    function cycleCallerOnMobile() {
+      const sel = document.getElementById('caller-number');
+      if (!sel) return;
+      const cur = sel.value;
+      const idx = CALLER_OPTIONS.findIndex(o => o.value === cur);
+      const next = CALLER_OPTIONS[(idx + 1) % CALLER_OPTIONS.length];
+      sel.value = next.value;
+      updateCallerPill();
+      try { audio.playDTMF('*'); } catch (e) {}
+    }
+    function updateCallerPill() {
+      const sel = document.getElementById('caller-number');
+      const pillNum = document.getElementById('caller-pill-num');
+      if (sel && pillNum) {
+        const found = CALLER_OPTIONS.find(o => o.value === sel.value);
+        pillNum.textContent = found ? found.label : sel.value;
+      }
+    }
+    document.addEventListener('DOMContentLoaded', updateCallerPill);
+
+    // v0.4.2: Wire the new <button data-digit="N"> keys (event delegation)
+    document.addEventListener('DOMContentLoaded', () => {
+      const pad = document.getElementById('dialer-keypad');
+      if (!pad) return;
+      pad.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-digit]');
+        if (!btn) return;
+        const digit = btn.dataset.digit;
+        // Visual press feedback (key turns accent color briefly)
+        btn.classList.add('pressed');
+        setTimeout(() => btn.classList.remove('pressed'), 110);
+        dialPad(digit);
+      });
+      // Sync the hidden select when the desktop selector changes (so caller
+      // is consistent regardless of which UI surface is used)
+      const sel = document.getElementById('caller-number');
+      if (sel) sel.addEventListener('change', updateCallerPill);
+    });
+
+    // ============================================================
+    // AGENT STATUS
+    // ============================================================
+    let agentStatus = 'available';
+    function setAgentStatus(s) {
+      agentStatus = s;
+      document.querySelectorAll('[data-status]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.status === s);
+      });
+      // Persist to backend (optional)
+      fetch(`${API_BASE}${API_PREFIX}/agents/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: s })
+      }).catch(() => { /* endpoint may not exist yet; ignore */ });
+    }
+
+    // ============================================================
+    // TABS
+    // ============================================================
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('tab-active', t.dataset.tab === name);
+      });
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+      document.getElementById('tab-' + name).classList.remove('hidden');
+      if (name === 'messages') loadThreads();
+      if (name === 'history') {
+        loadHistory();
+        // Mark missed as "seen" â€” badge clears until next missed call.
+        clearMissed();
+      }
+      if (name === 'recordings') {
+        // Reset last-visit so the badge clears and the next visit counts new
+        // recordings as fresh.
+        lastRecordingsVisit = Date.now();
+        localStorage.setItem('w3j_last_recordings_visit', String(lastRecordingsVisit));
+        newRecordingsCount = 0;
+        updateRecordingsBadge();
+        loadRecordings();
+      }
+      if (name === 'admin') loadAdmin();
+    }
+
+    // ============================================================
+    // API: HISTORY
+    // ============================================================
+    let historyEvents = [];
+    let historyFilter = 'all';
+    async function loadHistory() {
+      const tbody = document.getElementById('history-table');
+      tbody.innerHTML = `<tr><td colspan="5" class="text-gray-500 text-center py-8">${emptyState('ðŸ“‹', 'Loading historyâ€¦')}</td></tr>`;
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/calls/recent?limit=50`);
+        const d = await r.json();
+        historyEvents = d.events || [];
+        renderHistory();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5">${emptyState('âš ï¸', 'Failed to load history', e.message)}</td></tr>`;
+      }
+    }
+    function filterHistory(filter) {
+      historyFilter = filter;
+      document.querySelectorAll('#history-filters .filter-chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.filter === filter);
+      });
+      renderHistory();
+    }
+    function isMissedEvent(e) {
+      const ev = (e.event_type || e.event || '').toLowerCase();
+      if (ev.includes('missed')) return true;
+      // Inbound call that hung up without being answered
+      const num = e.from_number || e.to_number;
+      if (num && missedCallNumbers.has(num)) {
+        // Only flag if the direction was inbound AND never saw an 'answered' for this number
+        if (ev.includes('hangup') || ev.includes('ended') || ev.includes('completed')) return true;
+      }
+      return false;
+    }
+    function isOutboundEvent(e) {
+      const ev = (e.event_type || e.event || '').toLowerCase();
+      if (ev.includes('outbound') || ev.includes('initiated') || ev.includes('placed')) return true;
+      // Heuristic: our own numbers are +1 307, +1 320, +1 844
+      const ourNumbers = ['+13079999692', '+13204280793', '+18444618814'];
+      return ourNumbers.includes((e.from_number || '').replace(/\s/g, ''));
+    }
+    function isInboundEvent(e) {
+      const ev = (e.event_type || e.event || '').toLowerCase();
+      if (ev.includes('inbound') || ev.includes('received')) return true;
+      return !isOutboundEvent(e);
+    }
+    function renderHistory() {
+      const tbody = document.getElementById('history-table');
+      const filtered = historyEvents.filter(e => {
+        if (historyFilter === 'all') return true;
+        if (historyFilter === 'missed') return isMissedEvent(e);
+        if (historyFilter === 'outbound') return isOutboundEvent(e);
+        if (historyFilter === 'inbound') return isInboundEvent(e);
+        return true;
+      });
+      if (historyEvents.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5">${emptyState('ðŸ“‹', 'No recent calls', 'Call history will appear here')}</td></tr>`;
+        return;
+      }
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5">${emptyState('ðŸ”Ž', 'No matches', 'Try a different filter')}</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = filtered.map(e => {
+        const when = timeAgo(e.occurred_at || e.timestamp || e.created_at);
+        const from = e.from_number || e.from || 'â€”';
+        const to = e.to_number || e.to || 'â€”';
+        const ev = e.event_type || e.event || 'â€”';
+        const missed = isMissedEvent(e);
+        const cls = missed ? 'row-missed' : '';
+        const evPill = missed
+          ? `<span class="pill pill-off">${escapeHtml(ev)}</span>`
+          : `<span class="pill pill-on">${escapeHtml(ev)}</span>`;
+        return `<tr class="${cls}">
+          <td class="mono text-xs">${escapeHtml(when)}</td>
+          <td class="mono text-xs">${escapeHtml(from)}</td>
+          <td class="mono text-xs">${escapeHtml(to)}</td>
+          <td class="text-xs">${evPill}</td>
+          <td class="text-right">
+            <button class="btn btn-ghost text-xs py-1 px-2" onclick="clickToCall('${escapeHtml(to === 'â€”' ? from : to)}')">Call</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    function clickToCall(num) {
+      switchTab('dialer');
+      document.getElementById('number-input').value = num;
+      placeCall();
+    }
+
+    // ============================================================
+    // API: MESSAGES (SMS)
+    // ============================================================
+    let activeThread = null;
+    let messagesCache = [];
+
+    async function loadThreads() {
+      const list = document.getElementById('threads-list');
+      list.innerHTML = emptyState('ðŸ’¬', 'Loading threadsâ€¦');
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/messages/threads?limit=30`);
+        const d = await r.json();
+        const threads = d.threads || [];
+        // Sum unread counts for the tab badge
+        unreadSmsCount = threads.reduce((s, t) => s + (t.unread_count || 0), 0);
+        updateMessagesBadge();
+        if (threads.length === 0) {
+          list.innerHTML = emptyState('ðŸ’¬', 'No conversations yet', 'Start a conversation by sending a message');
+          return;
+        }
+        list.innerHTML = threads.map(t => {
+          const isActive = activeThread === t.remote;
+          return `<div class="p-3 border-b border-gray-800 cursor-pointer hover:bg-gray-800 ${isActive ? 'msg-thread-active' : ''}" onclick="selectThread('${escapeAttr(t.remote)}')">
+            <div class="flex items-center justify-between mb-1">
+              <p class="font-mono text-sm">${escapeHtml(t.remote)}</p>
+              ${t.unread_count > 0 ? `<span class="pill pill-on">${t.unread_count}</span>` : ''}
+            </div>
+            <p class="text-xs text-gray-400 truncate">${escapeHtml(t.last_message || '').substring(0, 60)}</p>
+            <p class="text-xs text-gray-500 mt-1">${timeAgo(t.last_at)}</p>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        list.innerHTML = emptyState('âš ï¸', 'Failed to load threads', e.message);
+      }
+    }
+
+    async function selectThread(remote) {
+      activeThread = remote;
+      document.getElementById('thread-remote').textContent = remote;
+      document.getElementById('thread-meta').textContent = 'Loadingâ€¦';
+      document.getElementById('thread-messages').innerHTML = emptyState('ðŸ’¬', 'Loading messagesâ€¦');
+      loadThreads();  // refresh active state + recount unread
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/messages/recent?limit=100`);
+        const d = await r.json();
+        const all = (d.messages || []).filter(m => {
+          const other = m.direction === 'inbound' ? m.from?.phone_number : (m.to?.[0]?.phone_number);
+          return other === remote;
+        });
+        messagesCache = all;
+        renderThread();
+      } catch (e) {
+        document.getElementById('thread-messages').innerHTML = emptyState('âš ï¸', 'Failed to load messages', e.message);
+      }
+    }
+
+    function renderThread() {
+      const wrap = document.getElementById('thread-messages');
+      if (messagesCache.length === 0) {
+        wrap.innerHTML = emptyState('ðŸ’¬', 'No messages in this thread yet', 'Send a message below to start the conversation');
+        document.getElementById('thread-meta').textContent = '0 messages';
+        return;
+      }
+      document.getElementById('thread-meta').textContent = `${messagesCache.length} message${messagesCache.length===1?'':'s'}`;
+      wrap.innerHTML = messagesCache.map(m => {
+        const out = m.direction === 'outbound';
+        return `<div class="msg-bubble ${out ? 'msg-out' : 'msg-in'}">
+          <p class="text-sm">${escapeHtml(m.text || '')}</p>
+          <p class="text-[10px] opacity-70 mt-1">${timeAgo(m.created_at)}</p>
+        </div>`;
+      }).join('');
+      wrap.scrollTop = wrap.scrollHeight;
+    }
+
+    async function sendSms() {
+      const input = document.getElementById('msg-input');
+      const text = input.value.trim();
+      if (!text) return;
+      const to = activeThread;
+      if (!to) { alert('Pick or start a thread first'); return; }
+      const from = document.getElementById('msg-from').value;
+      input.value = '';
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/sms/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, from, text })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          messagesCache.push({ direction: 'outbound', from: { phone_number: from }, to: [{ phone_number: to }], text, created_at: new Date().toISOString() });
+          renderThread();
+        } else {
+          alert('Send failed: ' + (d.error || 'unknown'));
+        }
+      } catch (e) { alert('Send error: ' + e.message); }
+    }
+
+    // ============================================================
+    // API: RECORDINGS
+    // ============================================================
+    let lastRecordingsVisit = parseInt(localStorage.getItem('w3j_last_recordings_visit') || '0', 10) || 0;
+    async function loadRecordings() {
+      const list = document.getElementById('recordings-list');
+      list.innerHTML = emptyState('ðŸŽ™ï¸', 'Loading recordingsâ€¦');
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/recordings?limit=20`);
+        const d = await r.json();
+        const recs = d.recordings || [];
+        if (recs.length === 0) {
+          list.innerHTML = emptyState('ðŸŽ™ï¸', 'No recordings yet', 'Recorded calls will appear here automatically');
+          newRecordingsCount = 0;
+          updateRecordingsBadge();
+          return;
+        }
+        list.innerHTML = recs.map(r => {
+          const dur = formatDuration(r.duration_secs);
+          return `<div class="panel-2 p-4">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <p class="text-sm font-semibold mono">${dur} Â· ${timeAgo(r.created_at)}</p>
+                <p class="text-xs text-gray-500 mono">leg ${(r.call_leg_id || '').substring(0, 8)}</p>
+              </div>
+              <span class="pill" style="background: rgba(255, 77, 109, 0.2); color: var(--danger);">REC</span>
+            </div>
+            <audio controls preload="none" src="${API_BASE}${API_PREFIX}/recordings/audio/${encodeURIComponent(r.id)}" class="w-full mt-2"></audio>
+          </div>`;
+        }).join('');
+        // Count recordings newer than the user's last visit
+        const now = Date.now();
+        const isOnRecordingsTab = document.getElementById('tab-recordings') &&
+          !document.getElementById('tab-recordings').classList.contains('hidden');
+        if (lastRecordingsVisit > 0) {
+          newRecordingsCount = recs.filter(rec => {
+            const t = new Date(rec.created_at).getTime();
+            return t > lastRecordingsVisit;
+          }).length;
+        } else {
+          newRecordingsCount = 0;
+        }
+        // If the user is on the recordings tab, mark the visit as now
+        // and clear the badge.
+        if (isOnRecordingsTab) {
+          lastRecordingsVisit = now;
+          localStorage.setItem('w3j_last_recordings_visit', String(now));
+          newRecordingsCount = 0;
+        }
+        updateRecordingsBadge();
+      } catch (e) {
+        list.innerHTML = emptyState('âš ï¸', 'Failed to load recordings', e.message);
+      }
+    }
+
+    // ============================================================
+    // API: ADMIN (numbers, agents)
+    // ============================================================
+    async function loadAdmin() {
+      const numbersEl = document.getElementById('admin-numbers');
+      const agentsEl = document.getElementById('admin-agents');
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/state`);
+        const d = await r.json();
+        // Numbers
+        const nums = d.numbers || [];
+        numbersEl.innerHTML = nums.length
+          ? nums.map(n => `
+            <div class="panel-2 p-3">
+              <p class="font-mono text-sm">${escapeHtml(n.phone_number)}</p>
+              <p class="text-xs text-gray-500">${escapeHtml(n.connection_name || 'â€”')} Â· ${escapeHtml(n.country_code || 'â€”')}</p>
+            </div>`).join('')
+          : emptyState('ðŸ“ž', 'No numbers provisioned', 'Buy a number in Telnyx Mission Control to get started');
+        // Agents
+        const ags = d.agents || [];
+        agentsEl.innerHTML = ags.length
+          ? ags.map(a => `
+            <div class="panel-2 p-3">
+              <p class="text-sm font-semibold">${escapeHtml(a.name)}</p>
+              <p class="text-xs text-gray-500 mono">${escapeHtml(a.model || 'â€”')}</p>
+            </div>`).join('')
+          : emptyState('ðŸ¤–', 'No AI agents', 'Provision an agent to start automating calls');
+        // Balance in header
+        if (d.balance && d.balance.balance != null) {
+          const bal = `$${d.balance.balance} ${d.balance.currency || 'USD'}`;
+          const a = document.getElementById('header-balance');      if (a) a.textContent = bal;
+          const b = document.getElementById('header-balance-m');    if (b) b.textContent = bal;
+          const c = document.getElementById('header-balance-sheet'); if (c) c.textContent = bal;
+        }
+      } catch (e) {
+        numbersEl.innerHTML = emptyState('âš ï¸', 'Failed to load admin', e.message);
+        agentsEl.innerHTML = '';
+      }
+    }
+
+    // ============================================================
+    // API: dialer side recents + numbers
+    // ============================================================
+    async function loadDialerRecents() {
+      const el = document.getElementById('dialer-recent');
+      const numsEl = document.getElementById('dialer-numbers');
+      try {
+        const r = await fetch(`${API_BASE}${API_PREFIX}/calls/recent?limit=20`);
+        const d = await r.json();
+        const events = d.events || [];
+        // Group by remote number, latest first
+        const seen = new Set();
+        const recents = [];
+        for (const e of events) {
+          const num = e.to_number === '+13079999692' ? (e.from_number || '') : (e.to_number || '');
+          if (num && !seen.has(num)) { seen.add(num); recents.push({ num, event: e.event_type, when: e.occurred_at }); }
+        }
+        el.innerHTML = recents.length
+          ? recents.slice(0, 8).map(r => `
+            <div class="flex items-center justify-between py-1 px-2 rounded hover:bg-gray-800 cursor-pointer" onclick="clickToCall('${r.num}')">
+              <span class="font-mono text-xs">${r.num}</span>
+              <span class="text-xs text-gray-500">${timeAgo(r.when)}</span>
+            </div>`).join('')
+          : emptyState('ðŸ•˜', 'No recent calls', 'Calls you make or receive will appear here');
+
+        // Numbers
+        const r2 = await fetch(`${API_BASE}${API_PREFIX}/numbers`);
+        const d2 = await r2.json();
+        const nums = d2.numbers || [];
+        numsEl.innerHTML = nums.length
+          ? nums.map(n => `
+            <div class="flex items-center justify-between py-1">
+              <span class="font-mono text-xs">${n.phone_number}</span>
+              <span class="text-xs text-gray-500">${n.connection_name || ''}</span>
+            </div>`).join('')
+          : emptyState('ðŸ“ž', 'No numbers', 'Provision a number in Telnyx to enable outbound calls');
+      } catch (e) { /* soft fail */ }
+    }
+
+    // ============================================================
+    // UTILS
+    // ============================================================
+    function timeAgo(iso) {
+      if (!iso) return 'â€”';
+      const d = new Date(iso); if (isNaN(d)) return 'â€”';
+      const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+      return `${Math.floor(diff/86400)}d ago`;
+    }
+    function formatDuration(secs) {
+      if (!secs && secs !== 0) return 'â€”';
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    }
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+    }
+    function escapeAttr(s) { return escapeHtml(s).replace(/'/g, "\\'"); }
+
+    // ============================================================
+    // AUTH
+    // ============================================================
+    function showPhone() {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('softphone').classList.remove('hidden');
+      // Initialise v0.3.0 badges from persisted state before any data loads
+      updateHistoryBadge();
+      loadDialerRecents();
+      loadAdmin();
+      // Background badge population â€” load threads + recordings silently so
+      // the tab badges reflect unread/new counts without forcing a tab visit.
+      loadThreads();
+      loadRecordings();
+      // Poll for new events every 8s
+      setInterval(() => {
+        loadDialerRecents();
+        // Re-poll messages and recordings in the background to refresh badges
+        loadThreads();
+        if (document.getElementById('tab-recordings') &&
+            !document.getElementById('tab-recordings').classList.contains('hidden')) {
+          loadRecordings();
+        } else {
+          // While NOT on the recordings tab, only count new ones (no render)
+          fetch(`${API_BASE}${API_PREFIX}/recordings?limit=20`)
+            .then(r => r.json())
+            .then(d => {
+              const recs = d.recordings || [];
+              if (lastRecordingsVisit > 0) {
+                newRecordingsCount = recs.filter(rec => new Date(rec.created_at).getTime() > lastRecordingsVisit).length;
+                updateRecordingsBadge();
+              }
+            }).catch(() => { /* soft fail */ });
+        }
+      }, 8000);
+      // Auto-fetch WebRTC credentials from the server and auto-connect
+      autoFetchCredentials().then(ok => {
+        if (ok) {
+          // Give SDK a moment to load
+          setTimeout(() => {
+            initTelnyx();
+            console.log('Auto-connecting to Telnyx WebRTCâ€¦');
+          }, 500);
+        } else {
+          // Show a non-blocking hint
+          const pill = document.getElementById('status-pill');
+          if (pill) {
+            pill.title = 'No server-side WebRTC credentials â€” open Settings to add manually';
+          }
+        }
+      });
+    }
+    function logout() {
+      try { disconnectWs(); } catch (e) {}
+      localStorage.removeItem('w3j_session_token');
+      location.reload();
+    }
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const user = document.getElementById('login-user').value;
+      const pw = document.getElementById('login-password').value;
+      try {
+        // Hit our backend to log in
+        await fetch(`${API_BASE}${API_PREFIX}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user, password: pw })
+        });
+      } catch (e) { /* soft fail â€” mock auth */ }
+      localStorage.setItem('w3j_session_token', 'mock');
+      document.getElementById('user-label').textContent = user;
+      showPhone();
+    });
+
+    // ============================================================
+    // WEBSOCKET CLIENT + INCOMING CALL MODAL + TOASTS (v0.3.0)
+    // ============================================================
+    //
+    // One WebSocket per browser tab. The server broadcasts every Telnyx
+    // event (call.initiated, call.answered, call.hangup, recording.ready,
+    // message.received) to every connected tab. The events drive:
+    //   1. The full-screen incoming call modal (call.incoming).
+    //   2. A top-right slide-in toast for SMS / recording / missed call.
+    //   3. A live "ws:on" indicator in the header so we can see at a glance
+    //      that the stream is connected.
+    let ws = null;
+    let wsReconnectDelay = 1000;          // backoff for reconnect
+    let wsReconnectTimer = null;
+    let wsLastEventAt = 0;
+    let pendingIncomingCall = null;        // last call.incoming data (until accepted/declined)
+    let pendingAccept = false;             // user clicked Accept before SDK notification arrived
+
+    function wsUrl() {
+      // ws:// for http://localhost, wss:// for everything else.
+      // Query param session_token matches the localStorage key the softphone
+      // already uses for the (mock) auth â€” same identifier, same tab.
+      const proto = API_BASE.startsWith('https://') ? 'wss' : 'ws';
+      const base = API_BASE.replace(/^https?:\/\//, '');
+      const token = localStorage.getItem('w3j_session_token') || 'anon';
+      return `${proto}://${base}/ws?session_token=${encodeURIComponent(token)}`;
+    }
+
+    function setWsStatus(state, label) {
+      ['ws-status', 'ws-status-m'].forEach(id => {
+        const root = document.getElementById(id);
+        const dot = root ? root.querySelector('.dot') : null;
+        if (root) {
+          const text = root.querySelector('[id$="ws-status-text"], [id$="-text-m"]');
+          if (text) text.textContent = label;
+          if (dot) {
+            dot.className = 'dot ' + (state === 'on' ? 'dot-on'
+                                    : state === 'connecting' ? 'dot-warn'
+                                    : 'dot-off');
+          }
+        }
+      });
+    }
+
+    function connectWs() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      setWsStatus('connecting', 'ws:â€¦');
+      try {
+        ws = new WebSocket(wsUrl());
+      } catch (e) {
+        console.warn('WS construct failed:', e);
+        scheduleWsReconnect();
+        return;
+      }
+      ws.addEventListener('open', () => {
+        console.log('WS open');
+        wsReconnectDelay = 1000;
+        setWsStatus('on', 'ws:on');
+      });
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          wsLastEventAt = Date.now();
+          handleWsEvent(msg);
+        } catch (e) {
+          console.warn('WS bad message', e);
+        }
+      });
+      ws.addEventListener('close', () => {
+        console.log('WS close');
+        setWsStatus('off', 'ws:off');
+        scheduleWsReconnect();
+      });
+      ws.addEventListener('error', (e) => {
+        console.warn('WS error', e);
+        // 'close' will fire after; let it handle the reconnect.
+      });
+    }
+
+    function scheduleWsReconnect() {
+      if (wsReconnectTimer) return;
+      wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        connectWs();
+      }, wsReconnectDelay);
+      wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+    }
+
+    function disconnectWs() {
+      if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+      if (ws) { try { ws.close(); } catch {} ws = null; }
+      setWsStatus('off', 'ws:off');
+    }
+
+    // â”€â”€â”€â”€â”€ Toast notifications â”€â”€â”€â”€â”€
+    function showToast({ title, message, kind, icon, durationMs }) {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const el = document.createElement('div');
+      el.className = 'toast toast-' + (kind || 'info');
+      el.innerHTML = `
+        <div class="toast-icon">${icon || 'ðŸ””'}</div>
+        <div class="toast-body">
+          <p class="toast-title">${escapeHtml(title || '')}</p>
+          <p class="toast-msg">${escapeHtml(message || '')}</p>
+        </div>
+      `;
+      stack.appendChild(el);
+      // trigger animation on next tick
+      requestAnimationFrame(() => el.classList.add('show'));
+      const ms = durationMs || 6000;
+      setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => { try { el.remove(); } catch {} }, 400);
+      }, ms);
+    }
+
+    // â”€â”€â”€â”€â”€ Ringtone (Web Audio API) â”€â”€â”€â”€â”€
+    let _ringCtx = null;
+    let _ringTimer = null;
+    function startRingtone() {
+      stopRingtone();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      try {
+        _ringCtx = _ringCtx || new Ctx();
+      } catch (e) { return; }
+      const ctx = _ringCtx;
+      // Resume if suspended (autoplay policy)
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const ring = () => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 440;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const t = ctx.currentTime;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.18, t + 0.05);
+        gain.gain.linearRampToValueAtTime(0.0, t + 1.0);
+        osc.start(t);
+        osc.stop(t + 1.0);
+      };
+      ring();
+      _ringTimer = setInterval(ring, 3000);  // ring every 3s like a US phone
+    }
+    function stopRingtone() {
+      if (_ringTimer) { clearInterval(_ringTimer); _ringTimer = null; }
+    }
+
+    // â”€â”€â”€â”€â”€ Incoming call modal â”€â”€â”€â”€â”€
+    function showIncomingModal(data) {
+      pendingIncomingCall = data;
+      const modal = document.getElementById('incoming-modal');
+      const num = data.from || 'Unknown';
+      document.getElementById('incoming-number').textContent = num;
+      document.getElementById('incoming-callid').textContent = data.call_control_id ? `cci: ${data.call_control_id}` : '';
+      // Try to render a friendly name; we don't have a contact list yet
+      // so show the number itself.
+      const nameEl = document.getElementById('incoming-name');
+      nameEl.textContent = num;
+      const avatar = document.getElementById('incoming-avatar');
+      // First char for the avatar bubble
+      avatar.textContent = (num.replace(/^\+\d/, '+') || '?').charAt(1) || '?';
+      avatar.textContent = (num || '?').toString().replace(/[^0-9]/g, '').slice(-1) || '+';
+      modal.classList.remove('hidden');
+      startRingtone();
+      // v0.4.2: also raise the persistent mobile-friendly call bar
+      try { updateCallBar(); } catch (e) {}
+    }
+    function hideIncomingModal() {
+      const modal = document.getElementById('incoming-modal');
+      modal.classList.add('hidden');
+      pendingIncomingCall = null;
+      pendingAccept = false;
+      stopRingtone();
+      // v0.4.2: also lower the persistent call bar (will re-raise if the
+      // FSM is still in ReceivingCall or OnCall)
+      try { updateCallBar(); } catch (e) {}
+    }
+    function acceptIncomingCall() {
+      if (!pendingIncomingCall) return;
+      stopRingtone();
+      // The browser tab already has a Telnyx SDK client and the same
+      // call will arrive via `telnyx.notification` (state: 'ringing').
+      // If the call object is already here, answer immediately. If not,
+      // set a flag so the SDK notification handler answers as soon as
+      // it arrives.
+      if (activeCall && activeCall.state === 'ringing') {
+        try { activeCall.answer(); }
+        catch (e) { console.error('answer() failed', e); }
+        fsm.fire('incomingCall');
+        fsm.fire('remoteAnswer');
+        view.setStatus(fsm.state);
+        view.showCallCard(pendingIncomingCall.from || 'Unknown', 'Incoming call');
+        view.setCallState('Answered');
+        hideIncomingModal();
+        showToast({
+          kind: 'info', icon: 'ðŸ“ž',
+          title: 'Call accepted',
+          message: 'Connected to ' + (pendingIncomingCall.from || 'caller'),
+          durationMs: 3000,
+        });
+        // v0.4.2: refresh the persistent call bar to show "On call"
+        try { updateCallBar(); } catch (e) {}
+      } else {
+        pendingAccept = true;
+        // The modal stays open until the SDK call arrives. Give it a
+        // 10s grace window â€” if the call never shows, close.
+        setTimeout(() => {
+          if (pendingAccept && pendingIncomingCall) {
+            pendingAccept = false;
+            hideIncomingModal();
+            showToast({
+              kind: 'missed', icon: 'âš ï¸',
+              title: 'No call to answer',
+              message: 'The browser WebRTC client did not receive this call. ' +
+                       'It may have been answered on another device.',
+              durationMs: 6000,
+            });
+          }
+        }, 10000);
+      }
+    }
+    function declineIncomingCall() {
+      stopRingtone();
+      // 1) ALWAYS tell Telnyx to reject the call on its side â€” this is the
+      //    only thing that actually closes the WebRTC media path. The local
+      //    `activeCall` is null for inbound until the user accepts, so the
+      //    browser SDK has no object to hangup â€” we MUST hit the server.
+      const cci = pendingIncomingCall && pendingIncomingCall.call_control_id;
+      if (cci) {
+        fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/reject`, {
+          method: 'POST', headers: { 'X-Tenant-Id': 'default' },
+        }).catch((e) => console.warn('reject call API failed', e));
+      }
+      // 2) Best-effort local cleanup (if WebRTC SDK already has the call object)
+      if (activeCall) {
+        try { activeCall.hangup(); } catch (e) { console.warn('hangup() failed', e); }
+      }
+      // 3) Move the FSM out of ReceivingCall so the UI stops ringing
+      try {
+        if (fsm.state === 'ReceivingCall') fsm.fire('remoteHangup');
+        else if (fsm.state === 'Ready') {}  // no-op; already idle
+      } catch (e) { /* FSM guard may reject; safe to ignore */ }
+      view.setStatus(fsm.state);
+      hideIncomingModal();
+      hideCallBar();
+      showToast({ kind: 'info', icon: 'ðŸ“µ', title: 'Call declined', durationMs: 2000 });
+    }
+
+    // Used by the persistent call bar's "end" button. Same as decline for
+    // an unanswered inbound, or sends a hangup for an active one.
+    function endOrDeclineCall() {
+      if (activeCall) {
+        // Active call â€” hang up via SDK + server
+        const cci = activeCall.parameters?.CallControlId || activeCall.id;
+        if (cci) {
+          fetch(`https://bk-jr-api.aixlabs.fun/api/calls/${encodeURIComponent(cci)}/hangup`, {
+            method: 'POST', headers: { 'X-Tenant-Id': 'default' },
+          }).catch((e) => console.warn('hangup API failed', e));
+        }
+        try { activeCall.hangup(); } catch (e) {}
+      } else {
+        declineIncomingCall();
+        return;
+      }
+      stopRingtone();
+      try {
+        if (fsm.state !== 'Ready') fsm.fire('localHangup');
+      } catch (e) {}
+      view.setStatus(fsm.state);
+      hideCallBar();
+    }
+
+    // Opens the softphone and jumps to the active call card (for the "open" bar button).
+    function openActiveCallFromBar() {
+      const card = document.getElementById('call-card');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // â”€â”€â”€â”€â”€ Persistent call bar (v0.4.2) â”€â”€â”€â”€â”€
+    function showCallBar(opts) {
+      const bar = document.getElementById('call-bar');
+      if (!bar) return;
+      const labelEl = document.getElementById('call-bar-label');
+      const numEl = document.getElementById('call-bar-number');
+      const acceptBtn = document.getElementById('call-bar-accept');
+      const declineBtn = document.getElementById('call-bar-decline');
+      const openBtn = document.getElementById('call-bar-open');
+      if (labelEl) labelEl.textContent = opts.label || 'Call';
+      if (numEl) numEl.textContent = opts.number || 'â€”';
+      // Show the right buttons for the state
+      if (acceptBtn) acceptBtn.classList.toggle('hidden', !opts.showAccept);
+      if (openBtn)   openBtn.classList.toggle('hidden',   !opts.showOpen);
+      if (declineBtn) declineBtn.classList.toggle('hidden', !opts.showDecline);
+      if (declineBtn) declineBtn.title = opts.declineTitle || 'End call';
+      bar.classList.remove('hidden');
+    }
+    function hideCallBar() {
+      const bar = document.getElementById('call-bar');
+      if (bar) bar.classList.add('hidden');
+    }
+    function updateCallBar() {
+      // Decide what to show based on FSM state
+      if (fsm.state === 'ReceivingCall' && pendingIncomingCall) {
+        showCallBar({
+          label: 'Incoming call',
+          number: pendingIncomingCall.from || 'Unknown',
+          showAccept: true, showDecline: true, showOpen: false,
+        });
+      } else if (fsm.state === 'OnCall' || fsm.state === 'OnHold' || fsm.state === 'Dialing') {
+        const num = (activeCall && (activeCall.options?.remoteCallerNumber || activeCall.parameters?.From)) || pendingIncomingCall?.from || 'Active call';
+        showCallBar({
+          label: fsm.state === 'Dialing' ? 'Dialingâ€¦' : 'On call',
+          number: num,
+          showAccept: false, showDecline: true, showOpen: true,
+          declineTitle: 'End call',
+        });
+      } else {
+        hideCallBar();
+      }
+    }
+
+    // â”€â”€â”€â”€â”€ WS event dispatch â”€â”€â”€â”€â”€
+    function handleWsEvent(msg) {
+      const t = msg.type;
+      const d = msg.data || {};
+      if (t === 'ws.hello') {
+        // Server handshake â€” nothing to render, but log for diagnostics
+        console.log('WS hello:', d);
+        return;
+      }
+      if (t === 'call.incoming') {
+        // Show the modal. If a call is already being handled, update it
+        // with the new caller â€” the first call was probably abandoned
+        // while the user wasn't watching.
+        showIncomingModal(d);
+        return;
+      }
+      if (t === 'call.answered') {
+        // Mirror the server-side answer: hide any modal (call was picked
+        // up on another device), show toast.
+        if (pendingIncomingCall && d.call_control_id === pendingIncomingCall.call_control_id) {
+          hideIncomingModal();
+        }
+        showToast({
+          kind: 'info', icon: 'âœ…',
+          title: 'Call answered',
+          message: (d.from || 'â€”') + ' answered on another device',
+          durationMs: 3500,
+        });
+        return;
+      }
+      if (t === 'call.hangup') {
+        // If this was the call we were ringing for, close the modal and
+        // show a "missed call" toast.
+        if (pendingIncomingCall && d.call_control_id === pendingIncomingCall.call_control_id) {
+          hideIncomingModal();
+          showToast({
+            kind: 'missed', icon: 'ðŸ“µ',
+            title: 'Missed call',
+            message: (d.from || 'Unknown') + ' hung up before you answered',
+            durationMs: 7000,
+          });
+        }
+        // Refresh history so the row appears.
+        try { loadDialerRecents(); } catch (e) {}
+        return;
+      }
+      if (t === 'recording.ready') {
+        showToast({
+          kind: 'recording', icon: 'ðŸŽ™ï¸',
+          title: 'Recording ready',
+          message: d.recording_id ? `${d.duration_secs || 0}s Â· ${d.recording_id.slice(0, 8)}â€¦` : 'Tap Recordings to listen',
+          durationMs: 5000,
+        });
+        // Refresh recording tab if it's open.
+        try { if (!document.getElementById('tab-recordings').classList.contains('hidden')) loadRecordings(); } catch (e) {}
+        return;
+      }
+      if (t === 'sms.received') {
+        showToast({
+          kind: 'sms', icon: 'ðŸ’¬',
+          title: 'New SMS from ' + (d.from || 'unknown'),
+          message: (d.text || '(no preview)').substring(0, 100),
+          durationMs: 6000,
+        });
+        // Refresh threads if user is on the messages tab.
+        try { if (!document.getElementById('tab-messages').classList.contains('hidden')) loadThreads(); } catch (e) {}
+        return;
+      }
+      console.debug('WS unhandled event', t, d);
+    }
+
+    // Hook the SDK notification handler so that if a ringing call arrives
+    // BEFORE the WS event (or instead of it â€” e.g. local-network mode),
+    // we still answer if the user already clicked Accept.
+    const _origHandleTelnyxNotification = handleTelnyxNotification;
+    handleTelnyxNotification = function(n) {
+      if (n.type === 'callUpdate' && n.call) {
+        const call = n.call;
+        if (call.state === 'ringing' && pendingAccept) {
+          // User clicked Accept in the modal before the SDK notified us.
+          // Answer immediately.
+          pendingAccept = false;
+          try { call.answer(); } catch (e) { console.error('late answer() failed', e); }
+          fsm.fire('incomingCall');
+          fsm.fire('remoteAnswer');
+          view.setStatus(fsm.state);
+          const remote = call.options?.remoteCallerNumber || call.parameters?.From || pendingIncomingCall?.from || 'Unknown';
+          view.showCallCard(remote, 'Incoming call');
+          view.setCallState('Answered');
+          hideIncomingModal();
+          showToast({ kind: 'info', icon: 'ðŸ“ž', title: 'Call accepted', message: 'Connected to ' + remote, durationMs: 3000 });
+          return;
+        }
+        // If we got a ringing notification without a pending modal, show one
+        // (covers the case where Telnyx's SIP INVITE arrives before the
+        // server-side webhook does â€” usually only happens on self-loopback).
+        if (call.state === 'ringing' && !pendingIncomingCall) {
+          const remote = call.options?.remoteCallerNumber || call.parameters?.From || 'Unknown';
+          showIncomingModal({ from: remote, call_control_id: call.parameters?.CallUUID || call.id || null });
+        }
+      }
+      return _origHandleTelnyxNotification(n);
+    };
+
+    // ============================================================
+    // BOOT
+    // ============================================================
+    loadSettings();
+    if (localStorage.getItem('w3j_session_token')) {
+      document.getElementById('user-label').textContent = 'agent';
+      showPhone();
+      // Open the WebSocket as soon as we land on the softphone so the
+      // incoming-call modal can fire the moment a real phone call hits
+      // the webhook. We also reconnect on tab visibilitychange in case
+      // the socket was killed while the tab was backgrounded.
+      connectWs();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && (!ws || ws.readyState !== WebSocket.OPEN)) {
+          connectWs();
+        }
+      });
+    }
+  </script>
+  <!-- ============================================================
+       PWA install banner + service-worker registration (v0.4.0)
+       ============================================================ -->
+  <div id="pwa-install-banner"
+       class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[min(560px,calc(100vw-2rem))] rounded-xl shadow-2xl border border-slate-700 bg-slate-900/95 backdrop-blur px-4 py-3 flex items-center gap-3"
+       role="status" aria-live="polite">
+    <div class="flex-1 min-w-0">
+      <p class="text-sm font-semibold text-slate-100">Install agentops</p>
+      <p class="text-xs text-slate-400 mt-0.5">Add the softphone to your home screen for one-tap calling â€” no browser bar.</p>
+    </div>
+    <button id="pwa-install-dismiss"
+            type="button"
+            class="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded">
+      Not now
+    </button>
+    <button id="pwa-install-action"
+            type="button"
+            class="text-xs font-semibold text-slate-900 bg-sky-400 hover:bg-sky-300 px-3 py-1.5 rounded-md">
+      Install
+    </button>
+  </div>
+  <script>
+    (function () {
+      'use strict';
+      // 1. Service worker â€” registers /sw.js at root scope so it can
+      //    intercept fetches across the whole origin.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function (err) {
+            console.warn('[pwa] service worker registration failed', err);
+          });
+        });
+      }
+
+      // 2. Install prompt â€” show a custom banner on first visit, hide forever
+      //    once dismissed (per origin, per device, in localStorage).
+      var banner = document.getElementById('pwa-install-banner');
+      var dismissBtn = document.getElementById('pwa-install-dismiss');
+      var installBtn = document.getElementById('pwa-install-action');
+      if (!banner || !dismissBtn || !installBtn) return;
+
+      var DISMISS_KEY = 'agentops_pwa_install_dismissed';
+      if (localStorage.getItem(DISMISS_KEY) === '1') {
+        banner.classList.add('hidden');
+        return;
+      }
+
+      var deferredPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        // The browser will fire this only if the site meets installability
+        // criteria (manifest, SW, served over HTTPS, has engagement).
+        e.preventDefault();
+        deferredPrompt = e;
+        banner.classList.remove('hidden');
+      });
+
+      function dismissForever() {
+        localStorage.setItem(DISMISS_KEY, '1');
+        banner.classList.add('hidden');
+      }
+      dismissBtn.addEventListener('click', dismissForever);
+
+      installBtn.addEventListener('click', function () {
+        if (!deferredPrompt) {
+          // Browser didn't surface a prompt (e.g. already installed) â€”
+          // just hide the banner without persisting dismissal in case a
+          // future trigger fires.
+          banner.classList.add('hidden');
+          return;
+        }
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(function (choice) {
+          if (choice && choice.outcome === 'dismissed') {
+            dismissForever();
+          } else {
+            banner.classList.add('hidden');
+          }
+          deferredPrompt = null;
+        }).catch(function () { banner.classList.add('hidden'); });
+      });
+
+      // If the app gets installed via the browser UI, hide the banner.
+      window.addEventListener('appinstalled', function () {
+        dismissForever();
+      });
+    })();
+  </script>
+  <script src="campaigns.js" defer></script>
+</body>
+</html>

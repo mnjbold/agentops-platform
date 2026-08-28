@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-lint:
+    name: Backend syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check
+        run: |
+          python -m compileall -q backend/webhooks backend/telnyx_mcp backend/scripts
+      - name: Import smoke test
+        run: |
+          cd backend
+          pip install --quiet -r requirements.txt
+          python -c "from webhooks import dashboard_api, server, security, storage; print('imports ok')"
