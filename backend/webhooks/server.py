@@ -64,8 +64,12 @@ app.add_middleware(
         "http://localhost:8080",
         "http://127.0.0.1:8080",
     ],
+    # Future-proof: allow any *.getbijou.xyz subdomain without having to
+    # add each one to the allow_origins list. The list above takes
+    # precedence over the regex.
+    allow_origin_regex=r"https://[a-z0-9-]+\.getbijou\.xyz",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

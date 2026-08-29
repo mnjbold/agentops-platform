@@ -1789,7 +1789,7 @@
     </p>
 
     <p class="auth-foot" style="margin-top: 12px; color: var(--ink-3); font-size: 11px;">
-      Backend: <span class="mono" id="auth-backend-url" style="color: var(--ink-2);">bk-jr-api.aixlabs.fun</span>
+      Backend: <span class="mono" id="auth-backend-url" style="color: var(--ink-2);">bkjr-api.getbijou.xyz</span>
     </p>
   </div>
 </div>
@@ -2717,21 +2717,55 @@
 /* ====================================================================
    CONFIG
    ==================================================================== */
-const API_BASE = 'https://bk-jr-api.aixlabs.fun';
+// Backend API base. The Coolify-hosted backend is at bkjr-api.getbijou.xyz;
+// the old bk-jr-api.aixlabs.fun Cloudflare tunnel is a fallback only used
+// when the primary host is unreachable (kept for zero-downtime cutover).
+const API_BASE_PRIMARY = 'https://bkjr-api.getbijou.xyz';
+const API_BASE_FALLBACK = 'https://bk-jr-api.aixlabs.fun';
+const API_BASE = API_BASE_PRIMARY;
 const API_PREFIX = '/api';
+let _apiBaseIndex = 0; // for the fallback round-robin
+const API_BASES = [API_BASE_PRIMARY, API_BASE_FALLBACK];
 const API = {
   base: API_BASE,
   url: (p) => API_BASE + API_PREFIX + p,
+  // fetch: try the primary backend first; on a network error or 5xx, fall
+  // back to the old Cloudflare tunnel so the UI keeps working during the
+  // cutover. Once the primary is healthy we stick with it.
   fetch: async (path, opts = {}) => {
-    const r = await fetch(API_BASE + API_PREFIX + path, {
-      ...opts,
-      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': localStorage.getItem('agentops.tenantId') || 'default', ...(opts.headers || {}) },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    const t = await r.text();
-    let d; try { d = t ? JSON.parse(t) : {}; } catch (e) { d = { raw: t }; }
-    if (!r.ok) throw new Error(d.detail || d.message || ('HTTP ' + r.status));
-    return d;
+    const start = _apiBaseIndex;
+    const order = [API_BASES[start]].concat(API_BASES.slice(start + 1), API_BASES.slice(0, start));
+    let lastErr = null;
+    for (let i = 0; i < order.length; i++) {
+      const base = order[i];
+      try {
+        const r = await fetch(base + API_PREFIX + path, {
+          ...opts,
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': localStorage.getItem('agentops.tenantId') || 'default', ...(opts.headers || {}) },
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+        const t = await r.text();
+        let d; try { d = t ? JSON.parse(t) : {}; } catch (e) { d = { raw: t }; }
+        if (!r.ok) {
+          // Only fall back on 5xx / 0; 4xx (auth/validation) should bubble up
+          if (r.status >= 500 && i < order.length - 1) { lastErr = new Error(d.detail || d.message || ('HTTP ' + r.status)); continue; }
+          throw new Error(d.detail || d.message || ('HTTP ' + r.status));
+        }
+        // Remember which base worked for next time
+        const idx = API_BASES.indexOf(base);
+        if (idx >= 0) _apiBaseIndex = idx;
+        try { const el = document.getElementById('auth-backend-url'); if (el) el.textContent = base.replace(/^https?:\/\//, ''); } catch (e) {}
+        return d;
+      } catch (e) {
+        lastErr = e;
+        // Network / CORS / DNS errors are retryable; otherwise bubble up
+        if (e && (e.name === 'AbortError' || (e.message && /Failed to fetch|NetworkError|Load failed|TypeError: fetch/i.test(e.message)))) {
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastErr || new Error('All backends unreachable');
   },
 };
 
@@ -3180,10 +3214,13 @@ function handleTelnyxNotification(n) {
 let ws = null, wsReconnectDelay = 1000, wsReconnectTimer = null, pendingIncomingCall = null, pendingAccept = false;
 
 function wsUrl() {
-  const proto = API_BASE.startsWith('https') ? 'wss' : 'ws';
-  const base = API_BASE.replace(/^https?:\/\//, '');
+  // Use whatever backend last succeeded (sticky based on API.fetch), so the
+  // WebSocket tracks the same host the REST calls are landing on.
+  const base = (typeof _apiBaseIndex !== 'undefined' && API_BASES[_apiBaseIndex]) || API_BASE;
+  const proto = base.startsWith('https') ? 'wss' : 'ws';
+  const host = base.replace(/^https?:\/\//, '');
   const token = localStorage.getItem('w3j_session_token') || 'anon';
-  return proto + '://' + base + '/ws?session_token=' + encodeURIComponent(token);
+  return proto + '://' + host + '/ws?session_token=' + encodeURIComponent(token);
 }
 
 function setWsStatus(state, label) {
@@ -4898,6 +4935,13 @@ function dialerCallContact(phone) {
    API LOADS
    ==================================================================== */
 function escapeHtml(s) { if (s == null) return ''; return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+// Alias used in single-quoted HTML attribute contexts. The escaping rules
+// are identical to escapeHtml above; this name makes the call sites read
+// more clearly and matches the convention used by other Linear/Vercel-style
+// design systems. Defined up here so every row render / template literal
+// that references it (history rows, contact cards, call detail, etc.) is
+// safe even if loadHistory() runs before the rest of the script.
+function escapeAttr(s) { return escapeHtml(s); }
 function timeAgo(iso) {
   if (!iso) return '—';
   const d = new Date(iso); if (isNaN(d)) return '—';
