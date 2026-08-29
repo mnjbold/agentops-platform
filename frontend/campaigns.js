@@ -158,67 +158,73 @@
   }
 
   // -------------------------------------------------------------------------
-  // Tab + panel injection
+  // Tab + panel injection (v5 sidebar-aware)
   // -------------------------------------------------------------------------
+  // v5+: The shell now uses a sidebar with data-tab nav items. The
+  // "campaigns" nav-item + #tab-campaigns panel are pre-rendered in
+  // index.html. We just need to populate the panel content; no DOM
+  // injection required. Falls back to the legacy tab-bar layout if the
+  // sidebar isn't present.
   function injectTab() {
-    // Anchor: the existing "admin" tab button. We insert the campaigns tab
-    // immediately after it so the order is: dialer, messages, history,
-    // recordings, admin, campaigns.
-    const adminTab = document.querySelector('[data-tab="admin"]');
-    if (!adminTab) return false;
-
-    // 1. Tab button. Reuse the same classes as the existing tab buttons so it
-    //    sits in the tab bar identically. No inline onclick — we wire our own
-    //    handler so the existing switchTab() stays untouched.
-    const tab = el('div', {
-      class: 'tab',
-      'data-tab': 'campaigns',
-      role: 'tab',
-    });
-    tab.innerHTML = '📣 Campaigns<span class="tab-badge hidden" id="campaigns-badge">0</span>';
-    tab.addEventListener('click', () => switchToCampaigns());
-    adminTab.parentElement.insertBefore(tab, adminTab.nextSibling);
-
-    // 2. Tab panel. We follow the existing id="tab-<name>" + class="tab-pane"
-    //    convention so the global switchTab() correctly toggles visibility
-    //    (the new tab supports a self-contained flow but degrades gracefully
-    //    if anyone calls switchTab('campaigns') directly).
-    const adminPanel = document.getElementById('tab-admin');
-    if (!adminPanel) return false;
-    const panel = el('section', {
-      id: 'tab-campaigns',
-      class: 'tab-pane hidden',
-    });
-    panel.innerHTML = `
-      <div class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 class="font-semibold">Campaigns &amp; Missions</h3>
-            <p class="text-xs text-gray-500">Outbound SMS, mass broadcasts, scheduled sends, and live mission tracking.</p>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button class="btn btn-ghost" data-cmp-action="scheduled">⏰ Scheduled</button>
-            <button class="btn btn-ghost" data-cmp-action="refresh">↻ Refresh</button>
-            <button class="btn btn-primary" data-cmp-action="new-sms">+ Manual SMS</button>
-            <button class="btn btn-primary" data-cmp-action="new-broadcast" style="background:var(--accent2);">+ Mass SMS</button>
-            <button class="btn btn-primary" data-cmp-action="new-campaign">+ New Campaign</button>
-          </div>
-        </div>
-
-        <div id="cmp-status" class="text-xs text-gray-500 mono">Loading campaigns…</div>
-
-        <div id="cmp-list" class="panel p-0 overflow-hidden"></div>
-
-        <div id="cmp-detail" class="hidden"></div>
-      </div>
-    `;
-    adminPanel.parentElement.insertBefore(panel, adminPanel.nextSibling);
-
+    const panel = document.getElementById('tab-campaigns') || document.getElementById('campaigns-container');
+    if (!panel) {
+      // Legacy fallback: try to inject a tab using the old structure.
+      const adminTab = document.querySelector('[data-tab="admin"]');
+      if (!adminTab) return false;
+      const adminPanel = document.getElementById('tab-admin');
+      if (!adminPanel) return false;
+      const tab = el('div', {
+        class: 'tab',
+        'data-tab': 'campaigns',
+        role: 'tab',
+      });
+      tab.innerHTML = '📣 Campaigns<span class="tab-badge hidden" id="campaigns-badge">0</span>';
+      tab.addEventListener('click', () => switchToCampaigns());
+      adminTab.parentElement.insertBefore(tab, adminTab.nextSibling);
+      const newPanel = el('section', {
+        id: 'tab-campaigns',
+        class: 'tab-pane hidden',
+      });
+      newPanel.innerHTML = renderPanelHtml();
+      adminPanel.parentElement.insertBefore(newPanel, adminPanel.nextSibling);
+      return true;
+    }
+    // v5 shell: panel already exists, just populate it.
+    panel.innerHTML = renderPanelHtml();
+    // Also expose the activate() entry point expected by the v5 shell.
+    window.Campaigns = window.Campaigns || {};
+    window.Campaigns.activate = loadCampaigns;
     return true;
   }
 
+  function renderPanelHtml() {
+    return `
+      <div class="page-head" style="margin-bottom: 18px;">
+        <div>
+          <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em;">Campaigns &amp; Missions</h2>
+          <p style="color: var(--ink-2); font-size: 13px; margin: 0;">Outbound SMS, mass broadcasts, scheduled sends, and live mission tracking.</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-ghost btn-sm" data-cmp-action="scheduled">⏰ Scheduled</button>
+          <button class="btn btn-ghost btn-sm" data-cmp-action="refresh">↻ Refresh</button>
+          <button class="btn btn-primary btn-sm" data-cmp-action="new-sms">+ Manual SMS</button>
+          <button class="btn btn-violet btn-sm" data-cmp-action="new-broadcast">+ Mass SMS</button>
+          <button class="btn btn-primary btn-sm" data-cmp-action="new-campaign">+ New Campaign</button>
+        </div>
+      </div>
+      <div id="cmp-status" style="font-size: 12px; color: var(--ink-3); font-family: var(--font-mono); margin-bottom: 12px;">Loading campaigns…</div>
+      <div id="cmp-list"></div>
+      <div id="cmp-detail" class="hidden"></div>
+    `;
+  }
+
   function switchToCampaigns() {
-    // Replicate the existing switchTab() behaviour but trigger our loader.
+    // v5 shell: switchTab() is the single source of truth for navigation.
+    if (typeof window.switchTab === 'function') {
+      window.switchTab('campaigns');
+      return;
+    }
+    // Legacy fallback
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('tab-active', t.dataset.tab === 'campaigns'));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
     const panel = document.getElementById('tab-campaigns');
