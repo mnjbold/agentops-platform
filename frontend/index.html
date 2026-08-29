@@ -3799,29 +3799,27 @@ function agentRecordings() {
 function openSystemAgent(intent) { toggleSystemAgent(true); if (intent) setTimeout(() => runAgentIntent(intent), 250); }
 
 /* ====================================================================
-   v5.2 — VOICE MODE (Web Speech API)
+   v5.3 — VOICE MODE (Telnyx AI Audio: TTS via /api/voice/tts, STT via MediaRecorder + /api/voice/stt)
+   ====================================================================
+   The system agent's voice is fully Telnyx-routed: we never fall back
+   to the browser's Web Speech API for TTS, and STT is captured by
+   MediaRecorder, base64-encoded, and POSTed to the backend which calls
+   the Telnyx AI Audio transcription API. This keeps the agent's voice
+   identity consistent with the live-call AI agents and routes every
+   audio minute through the user's Telnyx bill.
    ==================================================================== */
-const voiceState = { recognition: null, listening: false, tts: 'speechSynthesis' in window };
-
-function setupVoiceRecognition(target) {
-  // target is the input element to fill
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return null;
-  const r = new SR();
-  r.continuous = false;
-  r.interimResults = true;
-  r.lang = 'en-US';
-  r.onresult = (e) => {
-    let txt = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      txt += e.results[i][0].transcript;
-    }
-    if (target) target.value = txt;
-  };
-  r.onerror = () => { voiceState.listening = false; updateMicUI(); };
-  r.onend = () => { voiceState.listening = false; updateMicUI(); };
-  return r;
-}
+const voiceState = {
+  mediaRecorder: null,
+  chunks: [],
+  listening: false,
+  stream: null,
+  // Telnyx voice identity used for both TTS and the AI Assistant greeting
+  ttsVoice: 'Telnyx.KokoroTTS.af_heart',
+  ttsModel: 'telnyx/tts-1',
+  sttModel: 'openai/whisper-large-v3-turbo',
+  // current audio playback element
+  audio: null,
+};
 
 function updateMicUI() {
   ['agent-mic', 'onb-mic'].forEach(id => {
@@ -3831,33 +3829,125 @@ function updateMicUI() {
   });
 }
 
-function toggleAgentMic() {
-  const input = document.getElementById('agent-input');
-  if (!voiceState.recognition) voiceState.recognition = setupVoiceRecognition(input);
-  if (!voiceState.recognition) { showToast({ kind: 'error', title: 'Voice not supported', message: 'Try Chrome or Edge' }); return; }
-  if (voiceState.listening) { voiceState.recognition.stop(); voiceState.listening = false; }
-  else { voiceState.recognition.start(); voiceState.listening = true; }
-  updateMicUI();
-}
-
-function toggleOnbMic() {
-  const input = document.getElementById('onb-input');
-  if (!voiceState.recognition) voiceState.recognition = setupVoiceRecognition(input);
-  if (!voiceState.recognition) { showToast({ kind: 'error', title: 'Voice not supported' }); return; }
-  if (voiceState.listening) { voiceState.recognition.stop(); voiceState.listening = false; }
-  else { voiceState.recognition.start(); voiceState.listening = true; }
-  updateMicUI();
-}
-
-function speak(text) {
-  if (!voiceState.tts || !text) return;
+async function startVoiceCapture() {
+  // Request mic, start MediaRecorder, accumulate chunks until stop().
+  if (voiceState.listening) return;
   try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.0; u.pitch = 1.0; u.volume = 0.8;
-    window.speechSynthesis.speak(u);
-  } catch (e) {}
+    voiceState.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    showToast({ kind: 'error', title: 'Microphone denied', message: e.message || 'Allow mic access in browser settings' });
+    return;
+  }
+  voiceState.chunks = [];
+  const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
+  voiceState.mediaRecorder = new MediaRecorder(voiceState.stream, { mimeType });
+  voiceState.mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) voiceState.chunks.push(e.data); };
+  voiceState.mediaRecorder.start(250);
+  voiceState.listening = true;
+  updateMicUI();
 }
+
+async function stopVoiceCapture() {
+  if (!voiceState.listening) return '';
+  voiceState.listening = false;
+  updateMicUI();
+  return new Promise((resolve) => {
+    const rec = voiceState.mediaRecorder;
+    if (!rec) { resolve(''); return; }
+    rec.onstop = async () => {
+      try { voiceState.stream?.getTracks().forEach(t => t.stop()); } catch (e) {}
+      const blob = new Blob(voiceState.chunks, { type: rec.mimeType || 'audio/webm' });
+      voiceState.chunks = [];
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result || '';
+        const b64 = String(result).split(',')[1] || '';
+        resolve(b64);
+      };
+      reader.readAsDataURL(blob);
+    };
+    try { rec.stop(); } catch (e) { resolve(''); }
+  });
+}
+
+async function transcribeViaTelnyx(audioBase64) {
+  if (!audioBase64) return '';
+  try {
+    const r = await fetch(API_BASE + '/api/voice/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'default' },
+      body: JSON.stringify({ audio_base64: audioBase64, model: voiceState.sttModel, language: 'en' }),
+    });
+    if (!r.ok) return '';
+    const d = await r.json();
+    return (d && d.text) ? d.text.trim() : '';
+  } catch (e) {
+    console.warn('Telnyx STT failed', e);
+    return '';
+  }
+}
+
+async function speakViaTelnyx(text) {
+  if (!text) return;
+  try {
+    const r = await fetch(API_BASE + '/api/voice/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'default' },
+      body: JSON.stringify({ text, voice: voiceState.ttsVoice, model: voiceState.ttsModel, response_format: 'mp3', speed: 1.0 }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast({ kind: 'warn', title: 'TTS unavailable', message: (err && err.detail) || ('HTTP ' + r.status) });
+      return;
+    }
+    const d = await r.json();
+    let src = null;
+    if (d.audio_url) src = d.audio_url;
+    else if (d.audio_base64) src = 'data:audio/mpeg;base64,' + d.audio_base64;
+    if (!src) return;
+    if (voiceState.audio) { try { voiceState.audio.pause(); } catch (e) {} }
+    voiceState.audio = new Audio(src);
+    voiceState.audio.volume = 0.95;
+    voiceState.audio.play().catch(() => {});
+  } catch (e) {
+    console.warn('Telnyx TTS failed', e);
+  }
+}
+
+// Push-to-talk mic: click → start, click again → stop & transcribe
+async function toggleAgentMic() {
+  const input = document.getElementById('agent-input');
+  if (voiceState.listening) {
+    const b64 = await stopVoiceCapture();
+    if (b64) {
+      const text = await transcribeViaTelnyx(b64);
+      if (text) {
+        input.value = text;
+        submitAgentMessage({ preventDefault: () => {} });
+      }
+    }
+  } else {
+    await startVoiceCapture();
+  }
+}
+
+async function toggleOnbMic() {
+  const input = document.getElementById('onb-input');
+  if (voiceState.listening) {
+    const b64 = await stopVoiceCapture();
+    if (b64) {
+      const text = await transcribeViaTelnyx(b64);
+      if (text) { input.value = text; submitOnboarding(); }
+    }
+  } else {
+    await startVoiceCapture();
+  }
+}
+
+// speak() now uses Telnyx AI TTS via the backend, not the browser.
+// Kept as the same name so every existing caller (onbBot, agent reply,
+// etc.) automatically upgrades with no other code changes.
+function speak(text) { speakViaTelnyx(text); }
 
 /* ====================================================================
    v5.2 — AGENT SESSIONS (persistent)

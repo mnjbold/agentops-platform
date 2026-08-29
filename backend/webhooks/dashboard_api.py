@@ -484,34 +484,26 @@ async def api_dial(request: Request) -> dict:
                 "has a call control application assigned in Telnyx Mission Control.",
             )
 
-    payload = {
-        "to": to,
-        "from": from_num,
-        "connection_id": connection_id,
-        "webhook_url": webhook_url,
-    }
     try:
-        r = httpx.post(
-            "https://api.telnyx.com/v2/calls",
-            json=payload,
-            headers={"Authorization": f"Bearer {c.creds.api_key}", "Content-Type": "application/json"},
-            timeout=20,
+        # Use the official Telnyx Python SDK (not raw httpx) so we get
+        # typed responses, automatic retry, and consistent auth.
+        dial_result = c.dial(
+            to=to,
+            from_=from_num,
+            connection_id=connection_id,
+            client_state=f"dial:{to}",
         )
-        body_json = (
-            r.json()
-            if r.headers.get("content-type", "").startswith("application/json")
-            else {}
-        )
-        out = {
-            "status": r.status_code,
-            "body": body_json if body_json else (r.text[:500] if r.text else ""),
-        }
+        # Normalize to a JSON-friendly shape.
+        data = dial_result.get("data") if isinstance(dial_result, dict) and "data" in dial_result else dial_result
+        call_control_id = (data or {}).get("call_control_id") or ""
+        # Telnyx dial returns 200 on success; SDK raises on HTTP >= 400.
+        body_json = {"data": data} if not isinstance(dial_result, dict) or "data" not in dial_result else dial_result
+        out = {"status": 200, "body": body_json}
         # Best-effort: also write to Appwrite so the dashboard sees the call
         # before the webhook handler updates it. The webhook handler will
         # later upsert with full Telnyx metadata (status, duration, recording).
         try:
-            call_control_id = (body_json.get("data") or {}).get("call_control_id") or ""
-            if call_control_id and r.status_code < 400:
+            if call_control_id:
                 from appx.repos import calls as calls_repo
                 now_iso = datetime.now(timezone.utc).isoformat()
                 calls_repo.upsert_call(
@@ -527,7 +519,9 @@ async def api_dial(request: Request) -> dict:
             log.warning("Appwrite upsert_call after /dial failed (non-fatal): %s", e)
         return out
     except Exception as e:
-        raise HTTPException(500, f"Telnyx dial error: {e}")
+        # Surface a structured 502 so the frontend can show a useful message.
+        log.exception("Telnyx dial error")
+        raise HTTPException(502, f"Telnyx dial error: {e}")
 
 
 # Common helper used by both reject and hangup endpoints
@@ -573,6 +567,81 @@ async def api_answer_call(call_control_id: str) -> dict:
     SDK does not deliver the `call.state === 'ringing'` notification in time.
     """
     return _telnyx_call_action(call_control_id, "answer")
+
+
+@router.post("/voice/tts")
+async def api_voice_tts(request: Request) -> dict:
+    """Synthesize text to speech via Telnyx AI Audio (TTS).
+
+    Body: ``{text, voice?, model?, response_format?, speed?}``
+    Returns: ``{audio_url?, audio_base64?, voice, model, response_format}``
+
+    The frontend (system-agent voice mode) calls this instead of
+    ``window.speechSynthesis.speak`` so the agent uses the same voice
+    identity as the live call agents, all routed through the user's
+    Telnyx account.
+    """
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+    voice = body.get("voice") or "Telnyx.KokoroTTS.af_heart"
+    model = body.get("model") or "telnyx/tts-1"
+    response_format = body.get("response_format") or "mp3"
+    try:
+        speed = float(body.get("speed") or 1.0)
+    except (TypeError, ValueError):
+        speed = 1.0
+    try:
+        c = get_client()
+        result = c.synthesize_speech(
+            text=text,
+            voice=voice,
+            model=model,
+            response_format=response_format,
+            speed=speed,
+        )
+        return {
+            "audio_url": result.get("audio_url"),
+            "audio_base64": result.get("audio_base64"),
+            "voice": voice,
+            "model": model,
+            "response_format": response_format,
+        }
+    except Exception as e:
+        log.exception("TTS failed")
+        raise HTTPException(502, f"Telnyx TTS error: {e}")
+
+
+@router.post("/voice/stt")
+async def api_voice_stt(request: Request) -> dict:
+    """Transcribe an audio blob (base64) to text via Telnyx AI Audio (STT).
+
+    Body: ``{audio_base64, model?, language?, mime_type?}``
+    Returns: ``{text, model, language}``
+
+    The frontend MediaRecorder captures audio, base64-encodes it, and
+    POSTs here. The result goes back into the agent conversation.
+    """
+    body = await request.json()
+    audio_b64 = (body.get("audio_base64") or "").strip()
+    if not audio_b64:
+        raise HTTPException(400, "audio_base64 is required")
+    model = body.get("model") or "openai/whisper-large-v3-turbo"
+    language = body.get("language") or "en"
+    try:
+        c = get_client()
+        result = c.transcribe_audio(
+            audio_b64=audio_b64,
+            model=model,
+            language=language,
+        )
+        # Telnyx transcription response shape: {"text": "..."} or {data:{text:...}}
+        text = result.get("text") or (result.get("data") or {}).get("text") or ""
+        return {"text": text.strip(), "model": model, "language": language}
+    except Exception as e:
+        log.exception("STT failed")
+        raise HTTPException(502, f"Telnyx STT error: {e}")
 
 
 @router.post("/sms")

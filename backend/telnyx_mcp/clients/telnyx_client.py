@@ -431,6 +431,106 @@ class TelnyxClient:
     def list_voice_designs(self) -> list[dict]:
         return self.list_all(self.api.voice_designs.list())
 
+    # ───────────────────────────── AI audio: TTS / STT ──────────────────────
+    # The Telnyx AI Audio API is the standalone text-to-speech and
+    # speech-to-text surface (separate from the full call flow). The
+    # system-agent voice mode and the softphone whisper feature both
+    # call these so we don't fall back to the browser's Web Speech API.
+
+    def synthesize_speech(
+        self,
+        text: str,
+        *,
+        voice: str = "Telnyx.KokoroTTS.af_heart",
+        model: str = "telnyx/tts-1",
+        response_format: str = "mp3",
+        speed: float = 1.0,
+    ) -> dict:
+        """Synthesize ``text`` to speech using Telnyx AI Audio.
+
+        Returns a dict with either ``audio_url`` (when Telnyx returns a
+        hosted URL) or ``audio_base64`` (when only inline audio is
+        returned). The frontend plays the URL via <audio> or decodes the
+        base64 into a Blob and plays it.
+
+        Common voices (see ``list_voice_clones`` for custom):
+        * ``Telnyx.KokoroTTS.af_heart`` (warm female, default)
+        * ``Telnyx.KokoroTTS.am_adam`` (male)
+        * ``Telnyx.KokoroTTS.bf_emma`` (British female)
+        * ``AWS.Polly.Joanna``  /  ``AWS.Polly.Matthew``
+        * ``Azure.en-US-JennyNeural``
+        """
+        kwargs: dict[str, Any] = {
+            "input": text,
+            "voice": voice,
+            "model": model,
+            "response_format": response_format,
+            "speed": speed,
+        }
+        # The SDK exposes the audio resource under telnyx.Audio.
+        # Different SDK versions mount it as telnyx.Audio or
+        # telnyx.Ai.Audio — try both.
+        if hasattr(self.api, "audio"):
+            result = self.api.audio.speech.create(**kwargs)
+        elif hasattr(self.api, "ai") and hasattr(self.api.ai, "audio"):
+            result = self.api.ai.audio.speech.create(**kwargs)
+        else:
+            raise RuntimeError(
+                "Telnyx SDK does not expose an audio.speech resource in this version"
+            )
+        # Result may be a Pydantic model or a dict; normalize to dict.
+        if hasattr(result, "model_dump"):
+            out = result.model_dump(exclude_none=True)
+        elif isinstance(result, dict):
+            out = result
+        else:
+            out = {"data": str(result)}
+        # Some Telnyx SDK versions return the audio as a hosted URL,
+        # others as base64. Normalize so the frontend gets a single shape.
+        if "audio_url" not in out and "audio_base64" not in out:
+            data = out.get("data") or {}
+            if isinstance(data, dict):
+                if data.get("audio_url"):
+                    out["audio_url"] = data["audio_url"]
+                elif data.get("audio"):
+                    out["audio_base64"] = data["audio"]
+        return out
+
+    def transcribe_audio(
+        self,
+        audio_b64: str,
+        *,
+        model: str = "openai/whisper-large-v3-turbo",
+        language: str = "en",
+        response_format: str = "json",
+    ) -> dict:
+        """Transcribe a base64-encoded audio blob to text using Telnyx AI Audio.
+
+        Used by the system-agent voice mode (browser MediaRecorder →
+        base64 → backend → Telnyx → text). Keeps audio off the
+        third-party STT providers and routes everything through the
+        Telnyx account the user already pays for.
+        """
+        kwargs: dict[str, Any] = {
+            "file": audio_b64,  # SDK accepts base64 string for inline audio
+            "model": model,
+            "language": language,
+            "response_format": response_format,
+        }
+        if hasattr(self.api, "audio"):
+            result = self.api.audio.transcriptions.create(**kwargs)
+        elif hasattr(self.api, "ai") and hasattr(self.api.ai, "audio"):
+            result = self.api.ai.audio.transcriptions.create(**kwargs)
+        else:
+            raise RuntimeError(
+                "Telnyx SDK does not expose an audio.transcriptions resource in this version"
+            )
+        if hasattr(result, "model_dump"):
+            return result.model_dump(exclude_none=True)
+        if isinstance(result, dict):
+            return result
+        return {"text": str(result)}
+
 
 def get_client() -> TelnyxClient:
     """Process-wide singleton (lazy-initialized)."""
