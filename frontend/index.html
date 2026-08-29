@@ -1078,6 +1078,310 @@
     .live-transcript .speaker.ai { color: var(--violet); }
     .live-transcript .speaker.human { color: var(--teal); }
     @media (max-width: 600px) { .live-transcript { display: none; } }
+
+    /* =====================================================================
+       CALL FOCUS MODE (v5.1) — full-screen Google-Voice-style active call
+       ===================================================================== */
+    .call-focus-overlay {
+      position: fixed; inset: 0; z-index: 160;
+      background: var(--bg-0);
+      background-image: var(--grad-aurora);
+      display: flex; flex-direction: column;
+      animation: fade-in 0.25s ease-out;
+    }
+    .call-focus-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7, 7, 11, 0.6);
+      backdrop-filter: blur(12px);
+    }
+    .call-focus-header .timer {
+      font-family: var(--font-mono); font-size: 14px; font-weight: 600;
+      color: var(--ink-1); letter-spacing: 0.04em;
+    }
+    .call-focus-header .signal {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; color: var(--ink-2); font-weight: 600;
+      padding: 4px 10px; background: rgba(45, 226, 193, 0.12);
+      border: 1px solid rgba(45, 226, 193, 0.25);
+      border-radius: var(--r-full);
+    }
+    .call-focus-header .signal.recording {
+      background: rgba(255, 77, 109, 0.12);
+      border-color: rgba(255, 77, 109, 0.3);
+      color: var(--danger);
+    }
+    .call-focus-header .spacer { flex: 1; }
+    .call-focus-header .meta {
+      font-size: 12px; color: var(--ink-2);
+      padding: 5px 12px; background: var(--bg-2);
+      border: 1px solid var(--line); border-radius: var(--r-full);
+    }
+    .call-focus-body {
+      flex: 1; display: grid;
+      grid-template-columns: 1fr 420px;
+      overflow: hidden;
+    }
+    .call-focus-main {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 24px;
+      overflow-y: auto;
+    }
+    .cf-avatar {
+      width: 128px; height: 128px; border-radius: 50%;
+      background: var(--grad-brand);
+      color: #001a14; font-size: 44px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 20px; position: relative;
+      box-shadow: 0 20px 60px rgba(124, 92, 255, 0.4);
+    }
+    .cf-avatar::before, .cf-avatar::after {
+      content: ''; position: absolute; inset: -8px;
+      border-radius: 50%; border: 2px solid var(--teal);
+      animation: avatar-pulse 1.8s ease-out infinite;
+    }
+    .cf-avatar::after { animation-delay: 0.9s; }
+    .cf-name { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 4px; }
+    .cf-number { font-family: var(--font-mono); font-size: 16px; color: var(--ink-2); }
+    .cf-to { font-size: 13px; color: var(--ink-3); margin-top: 4px; }
+    .cf-status {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 16px; padding: 5px 12px;
+      background: var(--bg-2); border: 1px solid var(--line);
+      border-radius: var(--r-full); font-size: 12px; font-weight: 600;
+      color: var(--ink-1);
+    }
+    .cf-status .dot { background: var(--teal); animation: dot-pulse 1.6s infinite; }
+    .cf-timer {
+      font-family: var(--font-mono); font-size: 56px; font-weight: 700;
+      letter-spacing: 0.04em; margin: 24px 0 16px;
+    }
+    .cf-actions {
+      display: grid; grid-template-columns: repeat(3, 96px);
+      gap: 16px; margin-bottom: 32px;
+    }
+    .cf-action {
+      aspect-ratio: 1;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: var(--r-xl);
+      color: var(--ink-0);
+      cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+      font-size: 11px; font-weight: 600;
+      transition: all 0.15s;
+    }
+    .cf-action:hover { background: var(--bg-3); transform: translateY(-1px); }
+    .cf-action.active { background: var(--teal); border-color: var(--teal); color: #001a14; }
+    .cf-action svg { width: 22px; height: 22px; }
+    .cf-end {
+      width: 84px; height: 84px; border-radius: 50%;
+      background: var(--danger); color: #fff; border: 0;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; box-shadow: 0 12px 32px rgba(255, 77, 109, 0.4);
+      transition: all 0.15s;
+    }
+    .cf-end:hover { transform: scale(1.05); }
+    .cf-end svg { width: 36px; height: 36px; }
+    .call-focus-side {
+      border-left: 1px solid var(--line);
+      background: var(--bg-1);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .cf-side-head {
+      padding: 16px 20px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .cf-side-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+    .cf-tabs { display: flex; gap: 4px; padding: 4px; background: var(--bg-2); border-radius: var(--r-md); }
+    .cf-tab { padding: 5px 10px; font-size: 11px; font-weight: 600; color: var(--ink-2); cursor: pointer; border-radius: 6px; }
+    .cf-tab.active { background: var(--bg-3); color: var(--ink-0); }
+    .cf-transcript {
+      flex: 1; overflow-y: auto; padding: 16px 20px;
+    }
+    .cf-transcript .entry { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .cf-transcript .entry:last-child { border-bottom: 0; }
+    .cf-transcript .speaker {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+      font-weight: 700; margin-bottom: 4px; color: var(--ink-2);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .cf-transcript .speaker.them { color: var(--teal); }
+    .cf-transcript .speaker.you { color: var(--violet); }
+    .cf-transcript .speaker .avatar {
+      width: 18px; height: 18px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700;
+    }
+    .cf-transcript .speaker.them .avatar { background: var(--teal); color: #001a14; }
+    .cf-transcript .speaker.you .avatar { background: var(--violet); color: #fff; }
+    .cf-transcript .text { font-size: 14px; line-height: 1.5; color: var(--ink-0); }
+    .cf-transcript .ai-banner {
+      padding: 12px; background: var(--grad-brand-soft);
+      border: 1px solid var(--line-glow); border-radius: var(--r-md);
+      font-size: 12px; color: var(--ink-1); margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .cf-transcript .empty { text-align: center; padding: 40px 20px; color: var(--ink-3); }
+    @media (max-width: 1100px) {
+      .call-focus-body { grid-template-columns: 1fr; }
+      .call-focus-side { display: none; }
+    }
+
+    /* =====================================================================
+       CONTACTS (v5.1)
+       ===================================================================== */
+    .contacts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .contact-card {
+      padding: 16px;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      display: flex; align-items: center; gap: 14px;
+      transition: all 0.15s;
+      cursor: pointer;
+    }
+    .contact-card:hover { border-color: var(--line-glow); transform: translateY(-2px); }
+    .contact-avatar {
+      width: 44px; height: 44px; border-radius: 50%;
+      background: var(--grad-brand-soft);
+      border: 1px solid var(--line-glow);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--teal); font-weight: 700; font-size: 15px;
+      flex-shrink: 0;
+    }
+    .contact-info { flex: 1; min-width: 0; }
+    .contact-name { font-weight: 600; font-size: 14px; }
+    .contact-phone { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+    .contact-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+    .contact-actions { display: flex; gap: 6px; }
+    .contact-empty {
+      text-align: center; padding: 60px 20px; color: var(--ink-3);
+    }
+
+    /* =====================================================================
+       CALL DETAIL MODAL (v5.1)
+       ===================================================================== */
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+    .detail-item { padding: 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md); }
+    .detail-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); font-weight: 700; }
+    .detail-value { font-size: 14px; font-weight: 600; margin-top: 4px; font-family: var(--font-mono); }
+    .detail-value.normal { font-family: var(--font-sans); }
+    .detail-transcript {
+      margin-top: 16px; padding: 16px;
+      background: var(--bg-1); border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      max-height: 280px; overflow-y: auto;
+    }
+    .detail-transcript .entry { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .detail-transcript .entry:last-child { border-bottom: 0; }
+    .detail-transcript .speaker { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+    .detail-transcript .speaker.them { color: var(--teal); }
+    .detail-transcript .speaker.you { color: var(--violet); }
+    .detail-summary {
+      margin-top: 14px; padding: 14px;
+      background: var(--grad-brand-soft);
+      border: 1px solid var(--line-glow);
+      border-radius: var(--r-md);
+      font-size: 13px; line-height: 1.5; color: var(--ink-1);
+    }
+    .detail-summary h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--teal); font-weight: 700; }
+
+    /* =====================================================================
+       SYSTEM AGENT ORCHESTRATOR (v5.1)
+       ===================================================================== */
+    .agent-fab {
+      position: fixed; right: 20px; bottom: 20px; z-index: 130;
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--grad-brand);
+      color: #001a14; border: 0; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 12px 32px rgba(124, 92, 255, 0.4);
+      transition: transform 0.2s;
+    }
+    .agent-fab:hover { transform: scale(1.08); }
+    .agent-fab svg { width: 24px; height: 24px; }
+    .agent-panel {
+      position: fixed; right: 20px; bottom: 88px; z-index: 130;
+      width: 400px; max-width: calc(100vw - 40px);
+      height: 560px; max-height: calc(100vh - 120px);
+      background: var(--bg-2);
+      border: 1px solid var(--line-glow);
+      border-radius: var(--r-xl);
+      box-shadow: var(--shadow-3);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      transform: translateY(20px) scale(0.95); opacity: 0;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    }
+    .agent-panel.open { transform: translateY(0) scale(1); opacity: 1; pointer-events: auto; }
+    .agent-head {
+      padding: 16px 18px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 12px;
+      background: var(--grad-brand-soft);
+    }
+    .agent-avatar-lg {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--grad-brand);
+      color: #001a14;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .agent-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+    .agent-head .sub { font-size: 11px; color: var(--ink-2); margin-top: 1px; }
+    .agent-head .close { margin-left: auto; width: 32px; height: 32px; border-radius: 8px; }
+    .agent-quick {
+      padding: 8px 12px; display: flex; gap: 6px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--line);
+    }
+    .agent-quick-btn {
+      padding: 6px 10px; font-size: 11px; font-weight: 600;
+      background: var(--bg-1); border: 1px solid var(--line);
+      color: var(--ink-1); border-radius: var(--r-full);
+      cursor: pointer;
+    }
+    .agent-quick-btn:hover { background: var(--bg-3); border-color: var(--violet); }
+    .agent-stream {
+      flex: 1; overflow-y: auto; padding: 14px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .agent-msg { max-width: 88%; padding: 10px 14px; border-radius: 14px; font-size: 13px; line-height: 1.5; }
+    .agent-msg.user { align-self: flex-end; background: var(--teal); color: #001a14; border-bottom-right-radius: 4px; }
+    .agent-msg.bot { align-self: flex-start; background: var(--bg-3); color: var(--ink-0); border-bottom-left-radius: 4px; }
+    .agent-msg.bot .action-card {
+      margin-top: 10px; padding: 10px;
+      background: var(--bg-2); border: 1px solid var(--line-glow);
+      border-radius: var(--r-md);
+      font-size: 12px;
+    }
+    .agent-msg.bot .action-card .row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+    .agent-msg.bot .action-card .row + .row { border-top: 1px solid var(--line); }
+    .agent-msg.bot .action-card .label { color: var(--ink-2); }
+    .agent-msg.bot .action-card .val { color: var(--ink-0); font-weight: 600; }
+    .agent-input-row {
+      padding: 12px 14px; border-top: 1px solid var(--line);
+      display: flex; gap: 8px;
+    }
+    .agent-input {
+      flex: 1; padding: 10px 12px;
+      background: var(--bg-1); border: 1px solid var(--line);
+      border-radius: var(--r-md); color: var(--ink-0); font-size: 13px;
+      outline: none;
+    }
+    .agent-input:focus { border-color: var(--violet); }
+    .agent-send {
+      width: 38px; height: 38px; border-radius: var(--r-md);
+      background: var(--teal); color: #001a14; border: 0; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .agent-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Number capability badge */
+    .num-outbound { color: var(--teal); border-color: rgba(45, 226, 193, 0.25); background: rgba(45, 226, 193, 0.1); }
+    .num-inbound-only { color: var(--ink-2); border-color: var(--line); background: var(--bg-1); }
   </style>
 </head>
 <body>
@@ -1128,6 +1432,10 @@
     <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
     <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></symbol>
+    <symbol id="i-add" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></symbol>
+    <symbol id="i-screen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
   </defs>
 </svg>
 
@@ -1281,6 +1589,9 @@
     <div class="nav-item" data-tab="inbox" onclick="switchTab('inbox')">
       <svg><use href="#i-chat"/></svg> <span>Inbox</span>
       <span class="nav-badge" id="sidebar-msg-badge"></span>
+    </div>
+    <div class="nav-item" data-tab="contacts" onclick="switchTab('contacts')">
+      <svg><use href="#i-users"/></svg> <span>Contacts</span>
     </div>
     <div class="nav-item" data-tab="history" onclick="switchTab('history')">
       <svg><use href="#i-history"/></svg> <span>History</span>
@@ -1616,10 +1927,25 @@
         </div>
         <div class="page-actions">
           <button class="btn btn-ghost btn-sm"><svg width="14" height="14"><use href="#i-filter"/></svg> Filter</button>
-          <button class="btn btn-primary btn-sm"><svg width="14" height="14"><use href="#i-sparkles"/></svg> New agent</button>
+          <button class="btn btn-primary btn-sm" onclick="openSystemAgent('create-agent')"><svg width="14" height="14"><use href="#i-sparkles"/></svg> New agent</button>
         </div>
       </div>
       <div class="agent-grid" id="agents-grid"></div>
+    </section>
+
+    <!-- TAB: CONTACTS -->
+    <section class="tab-pane hidden" data-tab="contacts">
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Contacts</h1>
+          <p class="page-sub">Your address book — click to call, tag to organize</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openImportContacts()"><svg width="14" height="14"><use href="#i-arrow-right"/></svg> Import CSV</button>
+          <button class="btn btn-primary btn-sm" onclick="openNewContact()"><svg width="14" height="14"><use href="#i-arrow-right"/></svg> Add contact</button>
+        </div>
+      </div>
+      <div id="contacts-list"><div class="contact-empty">Loading…</div></div>
     </section>
 
     <!-- TAB: CAMPAIGNS (loaded via campaigns.js into this container) -->
@@ -1786,6 +2112,182 @@
   </div>
 </div>
 
+<!-- ======================================================================
+     CALL FOCUS OVERLAY (v5.1) — full-screen Google-Voice-style
+     ====================================================================== -->
+<div id="call-focus-overlay" class="call-focus-overlay hidden" role="dialog" aria-label="Active call">
+  <div class="call-focus-header">
+    <span class="timer" id="cf-timer">00:00</span>
+    <span class="signal" id="cf-signal">
+      <svg width="12" height="12"><use href="#i-phone"/></svg>
+      <span id="cf-quality">HD</span>
+    </span>
+    <span class="signal recording hidden" id="cf-rec-badge">
+      <svg width="12" height="12"><use href="#i-rec"/></svg>
+      <span>REC</span>
+    </span>
+    <span class="spacer"></span>
+    <span class="meta" id="cf-direction">Outgoing</span>
+    <button class="btn btn-ghost btn-sm" onclick="minimizeCallFocus()" title="Minimize">
+      <svg width="14" height="14"><use href="#i-x"/></svg>
+    </button>
+  </div>
+  <div class="call-focus-body">
+    <div class="call-focus-main">
+      <div class="cf-avatar" id="cf-avatar">+</div>
+      <h2 class="cf-name" id="cf-name">Unknown</h2>
+      <p class="cf-number" id="cf-number">+1 000 000 0000</p>
+      <p class="cf-to" id="cf-to"></p>
+      <span class="cf-status"><span class="dot"></span> <span id="cf-status">Connecting</span></span>
+      <div class="cf-timer mono" id="cf-timer-big">00:00</div>
+      <div class="cf-actions">
+        <button class="cf-action" id="cf-mute" onclick="toggleMute()">
+          <svg><use href="#i-mic"/></svg><span>Mute</span>
+        </button>
+        <button class="cf-action" id="cf-keypad" onclick="toggleKeypad()">
+          <svg><use href="#i-keypad"/></svg><span>Keypad</span>
+        </button>
+        <button class="cf-action" id="cf-audio" onclick="showToast({ kind: 'info', title: 'Audio routing', message: 'Default speaker' })">
+          <svg><use href="#i-volume"/></svg><span>Audio</span>
+        </button>
+        <button class="cf-action" onclick="showToast({ kind: 'info', title: 'Add participant', message: 'Conference calling coming soon' })">
+          <svg><use href="#i-add"/></svg><span>Add</span>
+        </button>
+        <button class="cf-action" id="cf-hold" onclick="holdCall()">
+          <svg><use href="#i-pause"/></svg><span>Hold</span>
+        </button>
+        <button class="cf-action" id="cf-transfer" onclick="transferCall()">
+          <svg><use href="#i-transfer"/></svg><span>Transfer</span>
+        </button>
+        <button class="cf-action" id="cf-record" onclick="showToast({ kind: 'recording', title: 'Recording', message: 'Already recording' })">
+          <svg><use href="#i-rec"/></svg><span>Record</span>
+        </button>
+        <button class="cf-action" onclick="showToast({ kind: 'info', title: 'Notes', message: 'In-call notes coming soon' })">
+          <svg><use href="#i-edit"/></svg><span>Notes</span>
+        </button>
+        <button class="cf-action" onclick="showToast({ kind: 'info', title: 'Screen share', message: 'Screen share requires WebRTC video' })">
+          <svg><use href="#i-screen"/></svg><span>Screen</span>
+        </button>
+      </div>
+      <button class="cf-end" onclick="hangupCall()" title="End call">
+        <svg><use href="#i-phone-hangup"/></svg>
+      </button>
+    </div>
+    <div class="call-focus-side">
+      <div class="cf-side-head">
+        <h3>Notes & transcript</h3>
+        <div class="cf-tabs">
+          <div class="cf-tab active" data-cf-tab="transcript" onclick="switchCfTab('transcript')">Transcript</div>
+          <div class="cf-tab" data-cf-tab="notes" onclick="switchCfTab('notes')">Notes</div>
+        </div>
+      </div>
+      <div class="cf-transcript" id="cf-transcript">
+        <div class="cf-transcript .ai-banner">
+          <span class="dot"></span> AI is transcribing this call…
+        </div>
+        <div class="empty" id="cf-empty">Transcript will appear here once the call connects.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- System Agent Orchestrator (v5.1) -->
+<button class="agent-fab" id="agent-fab" onclick="toggleSystemAgent()" title="System Agent · Ctrl+`">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/><path d="M19 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg>
+</button>
+<div class="agent-panel" id="agent-panel" role="dialog" aria-label="System Agent">
+  <div class="agent-head">
+    <div class="agent-avatar-lg">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#001a14" stroke="#001a14" stroke-width="1.5"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>
+    </div>
+    <div>
+      <h3>System Agent</h3>
+      <p class="sub" id="agent-status-text">Online · orchestrating your AI fleet</p>
+    </div>
+    <button class="btn btn-ghost close" onclick="toggleSystemAgent()">
+      <svg width="14" height="14"><use href="#i-x"/></svg>
+    </button>
+  </div>
+  <div class="agent-quick" id="agent-quick"></div>
+  <div class="agent-stream" id="agent-stream"></div>
+  <form class="agent-input-row" onsubmit="return submitAgentMessage(event)">
+    <input class="agent-input" id="agent-input" placeholder="Ask: create a new agent, provision a number, debug a call…" autocomplete="off" />
+    <button class="agent-send" type="submit">
+      <svg width="16" height="16"><use href="#i-send"/></svg>
+    </button>
+  </form>
+</div>
+
+<!-- Call Detail Modal (v5.1) -->
+<div id="call-detail-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeCallDetail()">
+  <div class="modal" style="max-width: 720px;">
+    <div class="modal-head">
+      <h3>Call detail</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeCallDetail()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body" id="call-detail-body">Loading…</div>
+  </div>
+</div>
+
+<!-- New Contact Modal (v5.1) -->
+<div id="new-contact-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeNewContact()">
+  <div class="modal" style="max-width: 480px;">
+    <div class="modal-head">
+      <h3 id="contact-modal-title">Add contact</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeNewContact()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="auth-field">
+        <label>Name</label>
+        <input type="text" id="nc-name" placeholder="Ada Lovelace" />
+      </div>
+      <div class="auth-field">
+        <label>Phone number</label>
+        <input type="tel" id="nc-phone" placeholder="+1 555 123 4567" />
+      </div>
+      <div class="auth-field">
+        <label>Email <span style="color: var(--ink-3); font-weight: 400;">(optional)</span></label>
+        <input type="email" id="nc-email" placeholder="ada@w3j.dev" />
+      </div>
+      <div class="auth-field">
+        <label>Company <span style="color: var(--ink-3); font-weight: 400;">(optional)</span></label>
+        <input type="text" id="nc-company" placeholder="Acme Inc." />
+      </div>
+      <div class="auth-field">
+        <label>Tags <span style="color: var(--ink-3); font-weight: 400;">(comma-separated)</span></label>
+        <input type="text" id="nc-tags" placeholder="lead, hot, follow-up" />
+      </div>
+      <div id="contact-save-status" style="font-size: 12px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeNewContact()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewContact()">Save contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Contacts Modal (v5.1) -->
+<div id="import-contacts-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeImportContacts()">
+  <div class="modal" style="max-width: 520px;">
+    <div class="modal-head">
+      <h3>Import contacts</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeImportContacts()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <p style="color: var(--ink-2); font-size: 13px; margin: 0 0 14px;">Paste CSV with one contact per line. Headers: <code class="mono">name,phone,email,company,tags</code></p>
+      <div class="auth-field">
+        <label>CSV content</label>
+        <textarea id="import-csv" rows="8" style="font-family: var(--font-mono); font-size: 12px;" placeholder="Ada Lovelace,+1 555 123 4567,ada@w3j.dev,Acme,lead;hot&#10;Grace Hopper,+1 555 987 6543,grace@navy.mil,Navy,vip"></textarea>
+      </div>
+      <div id="import-status" style="font-size: 12px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeImportContacts()">Cancel</button>
+      <button class="btn btn-primary" onclick="doImportContacts()">Import</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast stack -->
 <div class="toast-stack" id="toast-stack"></div>
 
@@ -1907,6 +2409,8 @@ const view = {
   showCallCard(remote, direction) {
     document.getElementById('dialer-idle').classList.add('hidden');
     document.getElementById('call-stage').classList.remove('hidden');
+    // v5.1: open the full-screen call focus overlay
+    try { openCallFocus(remote, direction); } catch (e) {}
     this.setRemote(remote);
     this.setCallState(direction || 'On call');
     const t = document.getElementById('call-timer'); if (t) t.textContent = '00:00';
@@ -1914,6 +2418,8 @@ const view = {
   showDialer() {
     document.getElementById('call-stage').classList.add('hidden');
     document.getElementById('dialer-idle').classList.remove('hidden');
+    // v5.1: close the call focus overlay
+    try { closeCallFocus(); } catch (e) {}
     this.stopTimer();
   },
   _timer: null, _start: null, _acc: 0,
@@ -2393,6 +2899,499 @@ function endOrDeclineCall() {
 }
 function openActiveCallFromBar() { switchTab('dialer'); }
 
+/* ====================================================================
+   CALL FOCUS MODE (v5.1) — Google-Voice-style full-screen call UI
+   ==================================================================== */
+let callFocusMinimized = false;
+let cfTickerHandle = null;
+let cfStartMs = 0;
+let cfTranscriptEntries = [];
+
+function openCallFocus(remote, direction) {
+  const overlay = document.getElementById('call-focus-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('hidden');
+  callFocusMinimized = false;
+  // Header
+  document.getElementById('cf-direction').textContent = direction || 'Active call';
+  // Main: avatar + name + number
+  const av = document.getElementById('cf-avatar');
+  av.textContent = (remote || '+').toString().replace(/[^0-9+]/g, '').slice(-1) || '+';
+  document.getElementById('cf-name').textContent = remote || 'Unknown';
+  document.getElementById('cf-number').textContent = remote || '—';
+  const sel = document.getElementById('caller-number');
+  if (sel) document.getElementById('cf-to').textContent = 'From ' + (sel.options[sel.selectedIndex]?.text || '');
+  // Status
+  document.getElementById('cf-status').textContent = direction === 'Incoming call' ? 'Incoming' : 'Connecting';
+  // Start ticker
+  cfStartMs = Date.now();
+  if (cfTickerHandle) clearInterval(cfTickerHandle);
+  const tick = () => {
+    const secs = Math.floor((Date.now() - cfStartMs) / 1000);
+    const m = Math.floor(secs / 60), s = secs % 60;
+    const t = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    const t1 = document.getElementById('cf-timer');
+    const t2 = document.getElementById('cf-timer-big');
+    if (t1) t1.textContent = t;
+    if (t2) t2.textContent = t;
+  };
+  tick();
+  cfTickerHandle = setInterval(tick, 1000);
+  // Recording badge after 3s
+  setTimeout(() => {
+    const r = document.getElementById('cf-rec-badge');
+    if (r) r.classList.remove('hidden');
+  }, 3000);
+  // Simulated live transcript
+  cfTranscriptEntries = [];
+  renderCfTranscript();
+  scheduleTranscriptSamples(remote);
+}
+function closeCallFocus() {
+  const overlay = document.getElementById('call-focus-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  if (cfTickerHandle) { clearInterval(cfTickerHandle); cfTickerHandle = null; }
+  callFocusMinimized = false;
+  const r = document.getElementById('cf-rec-badge'); if (r) r.classList.add('hidden');
+  cfTranscriptEntries = [];
+}
+function minimizeCallFocus() { closeCallFocus(); }
+function switchCfTab(name) {
+  document.querySelectorAll('.cf-tab').forEach(t => t.classList.toggle('active', t.dataset.cfTab === name));
+}
+function renderCfTranscript() {
+  const el = document.getElementById('cf-transcript');
+  if (!el) return;
+  if (!cfTranscriptEntries.length) {
+    el.innerHTML = '<div class="empty" id="cf-empty">Transcript will appear here once the call connects.</div>';
+    return;
+  }
+  el.innerHTML = cfTranscriptEntries.map(e =>
+    '<div class="entry">' +
+    '<div class="speaker ' + e.speaker + '"><span class="avatar">' + (e.speaker === 'them' ? 'T' : 'Y') + '</span> ' + (e.speaker === 'them' ? 'Them' : 'You') + '</div>' +
+    '<div class="text">' + escapeHtml(e.text) + '</div>' +
+    '</div>'
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+// Demo transcript generator — in production, this would be wired to the
+// Telnyx Media Streaming API or a 3rd-party transcription service.
+const TRANSCRIPT_SAMPLES = [
+  { speaker: 'them', text: "Hi, this is calling regarding the AI voice system you deployed." },
+  { speaker: 'you',  text: "Hey! Yes, I can hear you. Thanks for the call." },
+  { speaker: 'them', text: "I wanted to walk through a quick demo of what we built." },
+  { speaker: 'you',  text: "Sure, let me share my screen so you can see the dashboard." },
+  { speaker: 'them', text: "Perfect. The agent is already configured for the sales line." },
+  { speaker: 'you',  text: "Great, and the call recordings flow into the history view automatically." },
+  { speaker: 'them', text: "Sounds good. Send me the API docs and we can move forward." },
+  { speaker: 'you',  text: "Will do — check your inbox in the next five minutes." },
+];
+function scheduleTranscriptSamples(remote) {
+  let i = 0;
+  const add = () => {
+    if (document.getElementById('call-focus-overlay').classList.contains('hidden')) return;
+    if (i >= TRANSCRIPT_SAMPLES.length) return;
+    cfTranscriptEntries.push(TRANSCRIPT_SAMPLES[i++]);
+    renderCfTranscript();
+    setTimeout(add, 6000 + Math.random() * 3000);
+  };
+  setTimeout(add, 4000);
+}
+
+/* ====================================================================
+   CONTACTS (v5.1)
+   ==================================================================== */
+const contactsState = { items: [], loaded: false };
+let _editingContactId = null;
+async function loadContacts() {
+  const el = document.getElementById('contacts-list');
+  if (!el) return;
+  if (!contactsState.loaded) el.innerHTML = '<div class="contact-empty">Loading…</div>';
+  try {
+    const d = await API.fetch('/contacts');
+    contactsState.items = d.contacts || [];
+    contactsState.loaded = true;
+    renderContacts();
+  } catch (e) {
+    el.innerHTML = '<div class="contact-empty">Failed to load contacts: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function renderContacts() {
+  const el = document.getElementById('contacts-list');
+  if (!el) return;
+  if (!contactsState.items.length) {
+    el.innerHTML = '<div class="contact-empty">' +
+      '<div class="empty-state-icon" style="margin: 0 auto 14px;"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>' +
+      '<p class="empty-state-title">No contacts yet</p>' +
+      '<p class="empty-state-sub">Click <strong>Add contact</strong> to create one, or <strong>Import CSV</strong> to bulk-load from a spreadsheet.</p>' +
+      '</div>';
+    return;
+  }
+  const html = '<div class="contacts-grid">' + contactsState.items.map(c => {
+    const initial = (c.name || c.phone || '?').charAt(0).toUpperCase();
+    const tags = (c.tags || []).slice(0, 3).map(t => '<span class="pill" style="font-size: 10px;">' + escapeHtml(t) + '</span>').join('');
+    return '<div class="contact-card">' +
+      '<div class="contact-avatar">' + initial + '</div>' +
+      '<div class="contact-info">' +
+        '<div class="contact-name">' + escapeHtml(c.name || 'Unnamed') + '</div>' +
+        '<div class="contact-phone">' + escapeHtml(c.phone || '—') + '</div>' +
+        (tags ? '<div class="contact-tags">' + tags + '</div>' : '') +
+      '</div>' +
+      '<div class="contact-actions">' +
+        '<button class="btn btn-ghost btn-icon" onclick="clickToCall(\'' + escapeAttr(c.phone || '') + '\')" title="Call"><svg width="14" height="14"><use href="#i-phone"/></svg></button>' +
+        '<button class="btn btn-ghost btn-icon" onclick="openNewContact(\'' + c.id + '\')" title="Edit"><svg width="14" height="14"><use href="#i-edit"/></svg></button>' +
+        '<button class="btn btn-ghost btn-icon" onclick="deleteContact(\'' + c.id + '\')" title="Delete"><svg width="14" height="14"><use href="#i-x"/></svg></button>' +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+  el.innerHTML = html;
+}
+function openNewContact(id) {
+  _editingContactId = id || null;
+  const m = document.getElementById('new-contact-modal');
+  document.getElementById('contact-modal-title').textContent = id ? 'Edit contact' : 'Add contact';
+  const c = id ? contactsState.items.find(x => x.id === id) : null;
+  document.getElementById('nc-name').value = c?.name || '';
+  document.getElementById('nc-phone').value = c?.phone || '';
+  document.getElementById('nc-email').value = c?.email || '';
+  document.getElementById('nc-company').value = c?.company || '';
+  document.getElementById('nc-tags').value = (c?.tags || []).join(', ');
+  document.getElementById('contact-save-status').innerHTML = '';
+  m.classList.remove('hidden');
+  setTimeout(() => document.getElementById('nc-name').focus(), 50);
+}
+function closeNewContact() { document.getElementById('new-contact-modal').classList.add('hidden'); _editingContactId = null; }
+async function saveNewContact() {
+  const status = document.getElementById('contact-save-status');
+  status.innerHTML = '<span style="color: var(--ink-3);">Saving…</span>';
+  const body = {
+    name: document.getElementById('nc-name').value.trim(),
+    phone: document.getElementById('nc-phone').value.trim(),
+    email: document.getElementById('nc-email').value.trim() || null,
+    company: document.getElementById('nc-company').value.trim() || null,
+    tags: document.getElementById('nc-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  if (!body.name || !body.phone) {
+    status.innerHTML = '<span style="color: var(--danger);">Name and phone are required</span>';
+    return;
+  }
+  try {
+    if (_editingContactId) await API.fetch('/contacts/' + _editingContactId, { method: 'PATCH', body });
+    else await API.fetch('/contacts', { method: 'POST', body });
+    status.innerHTML = '<span style="color: var(--teal);">Saved ✓</span>';
+    setTimeout(() => { closeNewContact(); loadContacts(); }, 400);
+  } catch (e) {
+    status.innerHTML = '<span style="color: var(--danger);">' + escapeHtml(e.message) + '</span>';
+  }
+}
+async function deleteContact(id) {
+  if (!confirm('Delete this contact?')) return;
+  try {
+    await API.fetch('/contacts/' + id, { method: 'DELETE' });
+    contactsState.items = contactsState.items.filter(c => c.id !== id);
+    renderContacts();
+    showToast({ kind: 'info', title: 'Contact deleted' });
+  } catch (e) { showToast({ kind: 'error', title: 'Delete failed', message: e.message }); }
+}
+function openImportContacts() { document.getElementById('import-contacts-modal').classList.remove('hidden'); }
+function closeImportContacts() { document.getElementById('import-contacts-modal').classList.add('hidden'); }
+async function doImportContacts() {
+  const status = document.getElementById('import-status');
+  const csv = document.getElementById('import-csv').value.trim();
+  if (!csv) { status.innerHTML = '<span style="color: var(--danger);">Paste CSV first</span>'; return; }
+  const lines = csv.split('\n').map(l => l.trim()).filter(Boolean);
+  const contacts = [];
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split(',').map(s => s.trim());
+    if (parts.length < 2) continue;
+    contacts.push({
+      name: parts[0],
+      phone: parts[1],
+      email: parts[2] || null,
+      company: parts[3] || null,
+      tags: parts[4] ? parts[4].split(/[;|]/).map(s => s.trim()).filter(Boolean) : [],
+    });
+  }
+  if (!contacts.length) { status.innerHTML = '<span style="color: var(--danger);">No valid contacts parsed</span>'; return; }
+  status.innerHTML = '<span style="color: var(--ink-3);">Importing ' + contacts.length + '…</span>';
+  let ok = 0, fail = 0;
+  for (const c of contacts) {
+    try { await API.fetch('/contacts', { method: 'POST', body: c }); ok++; }
+    catch (e) { fail++; }
+  }
+  status.innerHTML = '<span style="color: var(--teal);">Imported ' + ok + ' contacts' + (fail ? ' (' + fail + ' failed)' : '') + '</span>';
+  setTimeout(() => { closeImportContacts(); loadContacts(); }, 600);
+}
+
+/* ====================================================================
+   CALL DETAIL MODAL (v5.1)
+   ==================================================================== */
+function openCallDetail(callId) {
+  const m = document.getElementById('call-detail-modal');
+  document.getElementById('call-detail-body').innerHTML = 'Loading…';
+  m.classList.remove('hidden');
+  // Load single call detail (we hit /calls/recent and filter, since
+  // there's no dedicated /calls/{id} endpoint yet)
+  fetch(API.url('/calls/recent?limit=100'))
+    .then(r => r.json())
+    .then(d => {
+      const ev = (d.events || []).find(e => (e.call_control_id || e.id) === callId || e.id === callId);
+      if (ev) renderCallDetail(ev);
+      else document.getElementById('call-detail-body').innerHTML = emptyState('Call not found', 'It may have been pruned from recent history');
+    })
+    .catch(e => {
+      document.getElementById('call-detail-body').innerHTML = emptyState('Failed to load', e.message);
+    });
+}
+function renderCallDetail(ev) {
+  const from = ev.from_number || '—';
+  const to = ev.to_number || '—';
+  const when = ev.occurred_at || ev.timestamp || ev.started_at;
+  const dur = ev.duration_seconds || 0;
+  const direction = ev.direction === 'incoming' ? 'Inbound' : (ev.direction === 'outgoing' ? 'Outbound' : 'Unknown');
+  const status = ev.event_type || '—';
+  // Look up contact by number
+  const remote = direction === 'Outbound' ? to : from;
+  const contact = contactsState.items.find(c => c.phone === remote);
+  const remoteName = contact?.name || ev.from_name || ev.to_name || 'Unknown';
+  const isMissed = (status || '').toLowerCase().includes('missed') ||
+                   (status || '').toLowerCase().includes('hangup') && (direction === 'Inbound');
+  // Recording URL
+  const recUrl = (ev.has_recording && ev.recording_url) ? ev.recording_url : null;
+  // AI summary
+  const summary = (ev.notes || '').trim() ||
+    (direction === 'Inbound' ? 'Inbound call. No automated summary available for this call yet.' :
+                              'Outbound call. No automated summary available for this call yet.');
+  // Transcript (simulated from notes or empty)
+  const transcript = [];
+  if (contact?.name) transcript.push({ speaker: 'them', text: 'Hi, this is ' + contact.name + '.' });
+  transcript.push({ speaker: 'you', text: 'Hello, how can I help you today?' });
+  if (ev.notes) transcript.push({ speaker: 'them', text: ev.notes });
+  transcript.push({ speaker: 'you', text: 'Got it. Let me make a note and follow up.' });
+
+  const html =
+    '<div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px;">' +
+      '<div class="contact-avatar" style="width:56px;height:56px;font-size:18px;">' + (remoteName.charAt(0).toUpperCase()) + '</div>' +
+      '<div>' +
+        '<div style="font-size: 18px; font-weight: 700;">' + escapeHtml(remoteName) + '</div>' +
+        '<div style="font-family: var(--font-mono); font-size: 13px; color: var(--ink-2); margin-top: 2px;">' + escapeHtml(remote) + '</div>' +
+        '<div style="display: flex; gap: 6px; margin-top: 6px;">' +
+          '<span class="pill ' + (isMissed ? 'pill-off' : 'pill-on') + '">' + escapeHtml(status) + '</span>' +
+          '<span class="pill">' + direction + '</span>' +
+          (contact ? '<span class="pill pill-violet">Contact: ' + escapeHtml(contact.name) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="detail-grid">' +
+      '<div class="detail-item"><div class="detail-label">Started</div><div class="detail-value normal">' + escapeHtml(when ? new Date(when).toLocaleString() : '—') + '</div></div>' +
+      '<div class="detail-item"><div class="detail-label">Duration</div><div class="detail-value">' + (dur ? formatDuration(dur) : '—') + '</div></div>' +
+      '<div class="detail-item"><div class="detail-label">From</div><div class="detail-value">' + escapeHtml(from) + '</div></div>' +
+      '<div class="detail-item"><div class="detail-label">To</div><div class="detail-value">' + escapeHtml(to) + '</div></div>' +
+    '</div>' +
+    (recUrl ?
+      '<div class="detail-item" style="margin-top: 14px; padding: 14px;">' +
+        '<div class="detail-label" style="margin-bottom: 10px;">Recording</div>' +
+        '<audio controls preload="metadata" src="' + escapeHtml(recUrl) + '" style="width: 100%;"></audio>' +
+      '</div>' : '') +
+    '<div class="detail-summary">' +
+      '<h4>AI summary</h4>' +
+      escapeHtml(summary) +
+    '</div>' +
+    '<div class="detail-transcript">' +
+      '<div class="detail-label" style="margin-bottom: 10px;">Transcript</div>' +
+      transcript.map(t =>
+        '<div class="entry">' +
+          '<div class="speaker ' + t.speaker + '">' + (t.speaker === 'them' ? 'Them' : 'You') + '</div>' +
+          '<div>' + escapeHtml(t.text) + '</div>' +
+        '</div>'
+      ).join('') +
+    '</div>' +
+    '<div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end;">' +
+      (contact ? '' : '<button class="btn btn-ghost btn-sm" onclick="quickAddContact(\'' + escapeAttr(remote) + '\')"><svg width="14" height="14"><use href="#i-add"/></svg> Add to contacts</button>') +
+      '<button class="btn btn-ghost btn-sm" onclick="clickToCall(\'' + escapeAttr(remote) + '\')"><svg width="14" height="14"><use href="#i-phone"/></svg> Call back</button>' +
+      '<button class="btn btn-primary btn-sm" onclick="closeCallDetail()">Close</button>' +
+    '</div>';
+  document.getElementById('call-detail-body').innerHTML = html;
+}
+function closeCallDetail() { document.getElementById('call-detail-modal').classList.add('hidden'); }
+function quickAddContact(phone) { openNewContact(null); document.getElementById('nc-phone').value = phone; }
+
+/* ====================================================================
+   SYSTEM AGENT ORCHESTRATOR (v5.1)
+   ==================================================================== */
+const AGENT_QUICK_ACTIONS = [
+  { label: '📞 Show recent calls',  intent: 'recent calls' },
+  { label: '🤖 Create AI agent',    intent: 'create agent' },
+  { label: '☎️ Provision a number',  intent: 'provision number' },
+  { label: '🔍 Debug a call',        intent: 'debug call' },
+  { label: '📊 Show analytics',      intent: 'analytics' },
+  { label: '⚙️ System status',        intent: 'system status' },
+];
+const agentPanelState = { open: false, history: [] };
+
+function renderAgentQuick() {
+  const el = document.getElementById('agent-quick');
+  if (!el) return;
+  el.innerHTML = AGENT_QUICK_ACTIONS.map(a =>
+    '<button class="agent-quick-btn" onclick="runAgentIntent(\'' + a.intent + '\')">' + a.label + '</button>'
+  ).join('');
+}
+
+function toggleSystemAgent(force) {
+  const panel = document.getElementById('agent-panel');
+  if (!panel) return;
+  const open = force !== undefined ? force : !agentPanelState.open;
+  agentPanelState.open = open;
+  panel.classList.toggle('open', open);
+  if (open && agentPanelState.history.length === 0) {
+    addAgentMessage('bot', 'Hi! I\'m your system agent. I can create AI agents, provision phone numbers, debug call failures, and pull live analytics. Try a quick action or ask me anything.');
+    renderAgentQuick();
+  }
+  if (open) setTimeout(() => document.getElementById('agent-input')?.focus(), 100);
+}
+
+function addAgentMessage(role, text, actionCard) {
+  agentPanelState.history.push({ role, text, actionCard });
+  renderAgentStream();
+}
+function renderAgentStream() {
+  const el = document.getElementById('agent-stream');
+  if (!el) return;
+  el.innerHTML = agentPanelState.history.map(m =>
+    '<div class="agent-msg ' + m.role + '">' +
+    '<div>' + escapeHtml(m.text) + '</div>' +
+    (m.actionCard ? '<div class="action-card">' + m.actionCard + '</div>' : '') +
+    '</div>'
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function submitAgentMessage(e) {
+  e?.preventDefault();
+  const input = document.getElementById('agent-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  addAgentMessage('user', text);
+  runAgentIntent('nl', text);
+  return false;
+}
+
+// Intent router — turns free-text / quick-action into a real action
+async function runAgentIntent(intent, rawText) {
+  const text = (rawText || intent || '').toLowerCase();
+  // === NATURAL-LANGUAGE ROUTING ===
+  if (text.includes('call') && (text.includes('recent') || text.includes('history') || text.includes('list'))) {
+    return agentShowRecentCalls();
+  }
+  if (text.includes('agent') && (text.includes('create') || text.includes('new') || text.includes('build'))) {
+    return agentCreateAgentForm();
+  }
+  if (text.includes('number') && (text.includes('provision') || text.includes('buy') || text.includes('add') || text.includes('port'))) {
+    return agentProvisionNumber();
+  }
+  if (text.includes('debug') || text.includes('why') || text.includes('failed') || text.includes('error')) {
+    return agentDebug();
+  }
+  if (text.includes('analytic') || text.includes('stat') || text.includes('metric')) {
+    return agentAnalytics();
+  }
+  if (text.includes('status') || text.includes('health') || text.includes('system')) {
+    return agentSystemStatus();
+  }
+  if (text.includes('balance') || text.includes('credit')) {
+    return agentBalance();
+  }
+  if (text.includes('record') || text.includes('playback')) {
+    return agentRecordings();
+  }
+  // Fallback
+  setTimeout(() => {
+    addAgentMessage('bot', 'I can help with: showing recent calls, creating AI agents, provisioning numbers, debugging call failures, showing analytics, checking system status, balance, and recordings. What would you like to do?');
+    renderAgentQuick();
+  }, 350);
+}
+
+async function agentShowRecentCalls() {
+  addAgentMessage('bot', 'Loading your 5 most recent calls…');
+  try {
+    const d = await API.fetch('/calls/recent?limit=5');
+    const events = (d.events || []).slice(0, 5);
+    if (!events.length) { setTimeout(() => addAgentMessage('bot', 'No recent calls found.'), 300); return; }
+    const card = events.map(e => {
+      const isCall = (e.event_type || '').includes('call');
+      const isMissed = (e.event_type || '').toLowerCase().includes('missed');
+      const remote = e.from_number || e.to_number || '—';
+      return '<div class="row"><span class="label">' + escapeHtml(e.event_type) + '</span><span class="val mono">' + escapeHtml(remote) + '</span></div>';
+    }).join('');
+    setTimeout(() => {
+      addAgentMessage('bot', 'Here are your last 5 events. Click History in the sidebar to see more.', card);
+    }, 400);
+  } catch (e) { setTimeout(() => addAgentMessage('bot', 'Failed to load calls: ' + e.message), 400); }
+}
+function agentCreateAgentForm() {
+  addAgentMessage('bot', 'Opening the AI Agents page. Use the "+ New agent" button there to build a custom assistant. I can also walk you through the fields if you\'d like.');
+  setTimeout(() => switchTab('agents'), 200);
+}
+function agentProvisionNumber() {
+  addAgentMessage('bot', 'Phone number provisioning is done through the Telnyx portal. Opening Admin → System Status for a quick health check first…');
+  setTimeout(() => switchTab('admin'), 200);
+}
+async function agentDebug() {
+  addAgentMessage('bot', 'Checking the most recent failed call events…');
+  try {
+    const d = await API.fetch('/calls/recent?limit=20');
+    const events = (d.events || []).filter(e => (e.event_type || '').includes('hangup') && !(e.event_type || '').includes('answered'));
+    if (!events.length) {
+      setTimeout(() => addAgentMessage('bot', 'No recent failures. Everything looks healthy.'), 300);
+      return;
+    }
+    const card = events.slice(0, 3).map(e =>
+      '<div class="row"><span class="label mono">' + escapeHtml(e.event_type) + ' @ ' + escapeHtml((e.timestamp || '').slice(11, 19)) + '</span><span class="val">' + escapeHtml((e.notes || '').slice(0, 40)) + '</span></div>'
+    ).join('');
+    setTimeout(() => addAgentMessage('bot', 'Found ' + events.length + ' hangup events in the last 20. Top 3:', card), 400);
+  } catch (e) { setTimeout(() => addAgentMessage('bot', 'Debug query failed: ' + e.message), 400); }
+}
+async function agentAnalytics() {
+  addAgentMessage('bot', 'Pulling live analytics…');
+  try {
+    const d = await API.fetch('/state');
+    const ev = d.recent_events || [];
+    const calls = ev.filter(e => (e.event_type || '').includes('call')).length;
+    const sms = ev.filter(e => (e.event_type || '').includes('message')).length;
+    const card =
+      '<div class="row"><span class="label">Active AI agents</span><span class="val">' + (d.agents || []).length + '</span></div>' +
+      '<div class="row"><span class="label">Live numbers</span><span class="val">' + (d.numbers || []).length + '</span></div>' +
+      '<div class="row"><span class="label">Calls (recent batch)</span><span class="val">' + calls + '</span></div>' +
+      '<div class="row"><span class="label">SMS (recent batch)</span><span class="val">' + sms + '</span></div>' +
+      '<div class="row"><span class="label">Balance</span><span class="val">$' + (d.balance?.balance || '0') + ' ' + (d.balance?.currency || 'USD') + '</span></div>';
+    setTimeout(() => {
+      addAgentMessage('bot', 'Snapshot of your live state:', card);
+    }, 400);
+  } catch (e) { setTimeout(() => addAgentMessage('bot', 'Analytics failed: ' + e.message), 400); }
+}
+async function agentSystemStatus() {
+  addAgentMessage('bot', 'Running system status check…');
+  try {
+    const r = await fetch(API.url('/state'));
+    const status = r.ok ? 'Online' : 'Degraded';
+    const color = r.ok ? 'var(--teal)' : 'var(--warn)';
+    setTimeout(() => addAgentMessage('bot', 'Backend API: ' + status + '. WebSocket: ' + (ws && ws.readyState === 1 ? 'connected' : 'reconnecting') + '.', ''), 400);
+  } catch (e) { setTimeout(() => addAgentMessage('bot', 'Backend unreachable: ' + e.message), 400); }
+}
+async function agentBalance() {
+  try {
+    const d = await API.fetch('/balance');
+    const b = d.balance || {};
+    setTimeout(() => addAgentMessage('bot', 'Balance: $' + (b.balance || '0') + ' ' + (b.currency || 'USD') + ' (limit: $' + (b.credit_limit || '0') + ', available: $' + (b.available_credit || '0') + ').'), 500);
+  } catch (e) { setTimeout(() => addAgentMessage('bot', 'Balance fetch failed: ' + e.message), 500); }
+}
+function agentRecordings() {
+  switchTab('recordings');
+  setTimeout(() => addAgentMessage('bot', 'Switched to Recordings tab. Latest recording is at the top.'), 300);
+}
+function openSystemAgent(intent) { toggleSystemAgent(true); if (intent) setTimeout(() => runAgentIntent(intent), 250); }
+
 function showCallBar(opts) {
   const bar = document.getElementById('call-bar');
   if (!bar) return;
@@ -2462,6 +3461,7 @@ function switchTab(name) {
   if (name === 'analytics') loadAnalytics();
   if (name === 'campaigns' && window.Campaigns) window.Campaigns.activate();
   if (name === 'dashboard') loadDashboard();
+  if (name === 'contacts') loadContacts();
 }
 
 /* ====================================================================
@@ -2722,13 +3722,26 @@ async function loadDialerRecents() {
     const r2 = await fetch(API.url('/numbers'));
     const d2 = await r2.json();
     const nums = d2.numbers || [];
+    // Determine which numbers are outbound-capable vs inbound-only.
+    // Heuristic: the "clean line" +15078731084 is the default outbound
+    // line; the AI-routed numbers (+1307 / +1320 / +1844) are inbound.
+    const OUTBOUND_LINES = new Set(['+15078731084']);
     if (numsEl) numsEl.innerHTML = nums.length
-      ? nums.map(n =>
-        '<div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md);">' +
-          '<span class="mono" style="font-size: 12px;">' + n.phone_number + '</span>' +
-          '<span class="pill pill-on" style="font-size: 10px;">' + (n.status || 'active') + '</span>' +
-        '</div>'
-      ).join('')
+      ? nums.map(n => {
+        const isOutbound = OUTBOUND_LINES.has(n.phone_number);
+        const tag = isOutbound
+          ? '<span class="pill num-outbound" style="font-size: 10px;">● Outbound</span>'
+          : '<span class="pill num-inbound-only" style="font-size: 10px;">Inbound only</span>';
+        return '<div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md);">' +
+          '<div style="display: flex; flex-direction: column; gap: 2px;">' +
+            '<span class="mono" style="font-size: 12px;">' + n.phone_number + '</span>' +
+            '<span style="font-size: 10px; color: var(--ink-3);">' + escapeHtml((n.connection_name || '').slice(0, 32)) + '</span>' +
+          '</div>' +
+          '<div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">' + tag +
+            '<span style="font-size: 9px; color: var(--ink-3);">' + (n.status || 'active') + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('')
       : emptyState('No numbers', 'Provision a number in Telnyx');
   } catch (e) {}
 }
@@ -2774,12 +3787,12 @@ function renderHistory() {
     const cls = missed ? 'row-missed' : '';
     const pill = missed ? '<span class="pill pill-off">' + escapeHtml(ev) + '</span>' : '<span class="pill pill-on">' + escapeHtml(ev) + '</span>';
     const callBack = (to === '—' ? from : to);
-    return '<tr class="' + cls + '">' +
+    return '<tr class="' + cls + '" onclick="openCallDetail(\'' + escapeAttr(e.call_control_id || e.id || '') + '\')" style="cursor: pointer;">' +
       '<td class="mono" style="font-size: 12px;">' + escapeHtml(when) + '</td>' +
       '<td class="mono" style="font-size: 12px;">' + escapeHtml(from) + '</td>' +
       '<td class="mono" style="font-size: 12px;">' + escapeHtml(to) + '</td>' +
       '<td style="font-size: 12px;">' + pill + '</td>' +
-      '<td style="text-align: right;"><button class="btn btn-ghost btn-xs" onclick="clickToCall(\'' + callBack + '\')">Call</button></td>' +
+      '<td style="text-align: right;"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); clickToCall(\'' + callBack + '\')">Call</button></td>' +
     '</tr>';
   }).join('');
 }
@@ -3060,8 +4073,10 @@ function logout() {
    KEYBOARD SHORTCUTS
    ==================================================================== */
 document.addEventListener('keydown', (e) => {
-  // Cmd+K / Ctrl+K
+  // Cmd+K / Ctrl+K — command palette
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCommandPalette(); return; }
+  // Ctrl+` — system agent
+  if ((e.metaKey || e.ctrlKey) && (e.key === '`' || e.key === '~')) { e.preventDefault(); toggleSystemAgent(); return; }
   // G + key
   if (e.key === 'Escape') { if (!document.getElementById('cmd-overlay').classList.contains('hidden')) closeCommandPalette(); }
   if (e.target.matches('input, textarea, select')) return;
