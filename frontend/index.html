@@ -1382,6 +1382,236 @@
     /* Number capability badge */
     .num-outbound { color: var(--teal); border-color: rgba(45, 226, 193, 0.25); background: rgba(45, 226, 193, 0.1); }
     .num-inbound-only { color: var(--ink-2); border-color: var(--line); background: var(--bg-1); }
+
+    /* =====================================================================
+       v5.2 — VOICE MODE, ONBOARDING, SETTINGS, GENUI, TOOLS
+       ===================================================================== */
+
+    /* Voice waveform */
+    .voice-bars { display: inline-flex; align-items: center; gap: 3px; height: 18px; }
+    .voice-bars .vb { width: 3px; background: var(--teal); border-radius: 2px; animation: voice-bar 0.9s ease-in-out infinite; }
+    .voice-bars .vb:nth-child(1) { height: 30%; animation-delay: 0s; }
+    .voice-bars .vb:nth-child(2) { height: 70%; animation-delay: 0.1s; }
+    .voice-bars .vb:nth-child(3) { height: 50%; animation-delay: 0.2s; }
+    .voice-bars .vb:nth-child(4) { height: 90%; animation-delay: 0.3s; }
+    .voice-bars .vb:nth-child(5) { height: 40%; animation-delay: 0.4s; }
+    @keyframes voice-bar { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+    .voice-bars.idle .vb { animation: none; height: 30% !important; opacity: 0.4; }
+
+    .mic-btn {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--bg-2); border: 1px solid var(--line);
+      color: var(--ink-1); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    .mic-btn:hover { background: var(--bg-3); }
+    .mic-btn.listening { background: var(--danger); border-color: var(--danger); color: #fff; animation: mic-pulse 1.4s ease-in-out infinite; }
+    @keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 109, 0.4); } 50% { box-shadow: 0 0 0 8px rgba(255, 77, 109, 0); } }
+
+    /* Streaming text */
+    .streaming-cursor { display: inline-block; width: 7px; height: 14px; background: var(--teal); vertical-align: -2px; margin-left: 2px; animation: blink 0.9s infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* Onboarding wizard */
+    .onb-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(7, 7, 11, 0.92);
+      backdrop-filter: blur(20px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      animation: fade-in 0.3s ease-out;
+    }
+    .onb-card {
+      width: 100%; max-width: 720px; max-height: 80vh;
+      background: var(--bg-2);
+      border: 1px solid var(--line-glow);
+      border-radius: var(--r-2xl);
+      box-shadow: var(--shadow-3);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .onb-head {
+      padding: 18px 24px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 14px;
+    }
+    .onb-avatar {
+      width: 44px; height: 44px; border-radius: var(--r-full);
+      background: var(--grad-brand);
+      color: #001a14;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .onb-head h2 { margin: 0; font-size: 18px; font-weight: 800; }
+    .onb-head .sub { color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+    .onb-progress {
+      margin-left: auto; display: flex; gap: 6px; align-items: center;
+    }
+    .onb-progress .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--bg-3); transition: all 0.3s;
+    }
+    .onb-progress .dot.active { background: var(--teal); width: 24px; border-radius: 4px; }
+    .onb-progress .dot.done { background: var(--violet); }
+    .onb-body {
+      flex: 1; overflow-y: auto; padding: 24px;
+    }
+    .onb-msg {
+      max-width: 88%;
+      padding: 14px 18px;
+      border-radius: var(--r-lg);
+      font-size: 15px; line-height: 1.55;
+      margin-bottom: 14px;
+    }
+    .onb-msg.bot {
+      background: var(--bg-3);
+      color: var(--ink-0);
+      border-bottom-left-radius: 4px;
+    }
+    .onb-msg.user {
+      background: var(--teal);
+      color: #001a14;
+      border-bottom-right-radius: 4px;
+      margin-left: auto;
+      font-weight: 500;
+    }
+    .onb-foot {
+      padding: 14px 24px; border-top: 1px solid var(--line);
+      display: flex; gap: 8px; align-items: center;
+    }
+    .onb-foot .input-wrap { flex: 1; display: flex; gap: 6px; }
+    .onb-foot input { flex: 1; }
+
+    /* GenUI action card */
+    .genui-card {
+      background: var(--bg-2);
+      border: 1px solid var(--line-glow);
+      border-radius: var(--r-md);
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .genui-card .row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; font-size: 13px; }
+    .genui-card .row + .row { border-top: 1px solid var(--line); }
+    .genui-card .label { color: var(--ink-2); }
+    .genui-card .val { color: var(--ink-0); font-weight: 600; font-family: var(--font-mono); }
+    .genui-card .actions { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+    /* Settings panel */
+    .settings-grid { display: grid; gap: 14px; }
+    .settings-section { padding: 18px; }
+    .settings-section h3 { margin: 0 0 4px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .settings-section .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 16px; }
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 12px 0; border-bottom: 1px solid var(--line);
+    }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-info h4 { margin: 0; font-size: 14px; font-weight: 600; }
+    .setting-info p { margin: 2px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.4; }
+    .switch {
+      position: relative; width: 42px; height: 24px;
+      background: var(--bg-3); border: 1px solid var(--line);
+      border-radius: var(--r-full); cursor: pointer;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    .switch::after {
+      content: ''; position: absolute; left: 2px; top: 1px;
+      width: 20px; height: 20px;
+      background: var(--ink-2); border-radius: 50%;
+      transition: all 0.15s;
+    }
+    .switch.on { background: var(--teal); border-color: var(--teal); }
+    .switch.on::after { left: 19px; background: #001a14; }
+
+    /* Tools grid (MCP) */
+    .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .tool-card {
+      padding: 16px;
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tool-card:hover { border-color: var(--violet); transform: translateY(-2px); }
+    .tool-card.connected { border-color: var(--teal); background: rgba(45, 226, 193, 0.05); }
+    .tool-card .icon { width: 32px; height: 32px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center; background: var(--bg-3); color: var(--ink-1); margin-bottom: 10px; }
+    .tool-card .name { font-weight: 600; font-size: 13px; }
+    .tool-card .desc { font-size: 11px; color: var(--ink-2); margin-top: 3px; line-height: 1.4; }
+    .tool-card .conn { font-size: 10px; color: var(--teal); margin-top: 6px; }
+
+    /* Sentiment tag */
+    .sentiment-positive { color: var(--teal); }
+    .sentiment-neutral { color: var(--ink-2); }
+    .sentiment-negative { color: var(--rose); }
+
+    /* Sub-agent / template card (used in Orchestrate tab) */
+    .des-card {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 12px; background: var(--bg-1);
+      border: 1px solid var(--line); border-radius: var(--r-md);
+      transition: transform 0.1s, border-color 0.1s;
+    }
+    .des-card:hover { border-color: var(--teal); transform: translateY(-1px); }
+    .des-icon { font-size: 22px; }
+    .des-name { font-size: 13px; font-weight: 700; }
+    .des-desc { font-size: 11px; color: var(--ink-2); line-height: 1.4; }
+
+    /* Agent tabs (Sessions / Memory / Tools) */
+    .agent-tabs {
+      display: flex; gap: 4px; padding: 4px;
+      background: var(--bg-1); border-radius: var(--r-md);
+      margin: 0 12px 8px;
+    }
+    .agent-tab {
+      flex: 1; padding: 6px; font-size: 11px; font-weight: 600;
+      color: var(--ink-2); cursor: pointer;
+      border-radius: 6px; text-align: center;
+    }
+    .agent-tab.active { background: var(--bg-3); color: var(--ink-0); }
+
+    /* Session list */
+    .sessions-list { padding: 0 12px 8px; max-height: 120px; overflow-y: auto; }
+    .session-item {
+      padding: 8px 10px; border-radius: var(--r-sm);
+      cursor: pointer; font-size: 12px; color: var(--ink-2);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .session-item:hover { background: var(--bg-2); color: var(--ink-0); }
+    .session-item.active { background: var(--bg-3); color: var(--teal); }
+    .session-item .meta { font-size: 10px; color: var(--ink-3); }
+
+    /* Memory list */
+    .memory-list { padding: 0 12px 8px; max-height: 200px; overflow-y: auto; }
+    .memory-item {
+      padding: 8px 10px; border-radius: var(--r-sm);
+      background: var(--bg-1); margin-bottom: 4px;
+      font-size: 12px; color: var(--ink-1);
+      border-left: 2px solid var(--violet);
+    }
+    .memory-item .ts { font-size: 10px; color: var(--ink-3); margin-top: 4px; }
+    .memory-item .del { color: var(--ink-3); cursor: pointer; margin-left: 6px; }
+
+    /* Campaign designer */
+    .designer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 768px) { .designer-grid { grid-template-columns: 1fr; } }
+    .designer-preview {
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(124, 92, 255, 0.05), rgba(45, 226, 193, 0.02)), var(--bg-1);
+      border: 1px solid var(--line-glow);
+      border-radius: var(--r-md);
+      min-height: 280px;
+    }
+    .designer-preview h4 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+    .designer-preview .preview-msg { padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-md); margin: 6px 0; font-size: 13px; line-height: 1.5; }
+    .designer-preview .preview-tag { display: inline-block; font-size: 10px; padding: 2px 6px; background: var(--bg-3); border-radius: 4px; color: var(--ink-2); margin-right: 4px; }
+
+    /* Sentiment in history */
+    .sentiment-bar { display: inline-flex; align-items: center; gap: 4px; }
+    .sentiment-bar .bar { width: 30px; height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+    .sentiment-bar .bar > div { height: 100%; background: var(--teal); }
+    .sentiment-bar .bar > div.neg { background: var(--rose); }
   </style>
 </head>
 <body>
@@ -1617,6 +1847,9 @@
     <div class="nav-item" data-tab="admin" onclick="switchTab('admin')">
       <svg><use href="#i-cpu"/></svg> <span>Admin</span>
     </div>
+    <div class="nav-item" onclick="openSettingsPanel()">
+      <svg><use href="#i-settings"/></svg> <span>Settings</span>
+    </div>
 
     <div class="sidebar-balance">
       <div class="sidebar-balance-label">Balance</div>
@@ -1741,11 +1974,9 @@
             <div class="dialer-from">
               <span>From</span>
               <select id="caller-number" style="width: auto; background: transparent; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer;">
-                <option value="+15078731084" selected>+1 507 873 1084</option>
-                <option value="+13079999692">+1 307 999 9692</option>
-                <option value="+13204280793">+1 320 428 0793</option>
-                <option value="+18444618814">+1 844 461 8814</option>
+                <option value="+15078731084" selected>+1 507 873 1084 — Work</option>
               </select>
+              <span class="pill num-outbound" style="font-size: 9px; margin-left: 6px;" title="Outbound-capable. The 3 AI-routed numbers (+1 307, +1 320, +1 844) handle inbound and are managed by the system agent.">● Outbound</span>
             </div>
           </div>
 
@@ -1821,7 +2052,14 @@
         </div>
 
         <div class="panel" style="padding: 18px;">
-          <h3 style="margin: 0 0 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);">Recents</h3>
+          <h3 style="margin: 0 0 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);">Contacts</h3>
+          <div style="position: relative; margin-bottom: 12px;">
+            <input id="dialer-contact-search" type="text" placeholder="Search contacts by name, company, or number…" oninput="filterDialerContacts(this.value)" style="width: 100%; padding: 9px 12px 9px 34px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink-0); font: inherit;" />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--ink-3);"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div id="dialer-contacts-list" style="display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; margin-bottom: 14px;"></div>
+
+          <h3 style="margin: 6px 0 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);">Recents</h3>
           <div id="dialer-recent" style="display: flex; flex-direction: column; gap: 2px;"></div>
 
           <h3 style="margin: 18px 0 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);">Numbers</h3>
@@ -2084,11 +2322,12 @@
       <div class="auth-field">
         <label>Default caller number</label>
         <select id="settings-caller">
-          <option value="+15078731084">+1 507 873 1084 (clean line · default)</option>
-          <option value="+13079999692">+1 307 999 9692 (W3J LLC)</option>
-          <option value="+13204280793">+1 320 428 0793 (Bijou)</option>
-          <option value="+18444618814">+1 844 461 8814 (Personal Twin · has AI)</option>
+          <option value="+15078731084">+1 507 873 1084 — Work (outbound-capable)</option>
+          <option value="+13079999692" disabled>+1 307 999 9692 — inbound-only (AI screening)</option>
+          <option value="+13204280793" disabled>+1 320 428 0793 — inbound-only (AI screening)</option>
+          <option value="+18444618814" disabled>+1 844 461 8814 — inbound-only (AI screening)</option>
         </select>
+        <div style="font-size: 11px; color: var(--ink-3); margin-top: 6px;">Outbound calls can only originate from your work line. Inbound numbers are managed by the system agent.</div>
       </div>
       <div id="settings-status" style="font-size: 12px;"></div>
     </div>
@@ -2191,7 +2430,7 @@
   </div>
 </div>
 
-<!-- System Agent Orchestrator (v5.1) -->
+<!-- System Agent Orchestrator (v5.2) -->
 <button class="agent-fab" id="agent-fab" onclick="toggleSystemAgent()" title="System Agent · Ctrl+`">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/><path d="M19 14l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg>
 </button>
@@ -2204,18 +2443,63 @@
       <h3>System Agent</h3>
       <p class="sub" id="agent-status-text">Online · orchestrating your AI fleet</p>
     </div>
-    <button class="btn btn-ghost close" onclick="toggleSystemAgent()">
+    <button class="btn btn-ghost close" onclick="toggleSystemAgent()" style="width: 32px; height: 32px; padding: 0;">
       <svg width="14" height="14"><use href="#i-x"/></svg>
     </button>
   </div>
-  <div class="agent-quick" id="agent-quick"></div>
-  <div class="agent-stream" id="agent-stream"></div>
-  <form class="agent-input-row" onsubmit="return submitAgentMessage(event)">
-    <input class="agent-input" id="agent-input" placeholder="Ask: create a new agent, provision a number, debug a call…" autocomplete="off" />
+  <div class="agent-tabs">
+    <div class="agent-tab active" data-agent-tab="chat" onclick="switchAgentTab('chat')">Chat</div>
+    <div class="agent-tab" data-agent-tab="orchestrate" onclick="switchAgentTab('orchestrate')">Orchestrate</div>
+    <div class="agent-tab" data-agent-tab="sessions" onclick="switchAgentTab('sessions')">Sessions</div>
+    <div class="agent-tab" data-agent-tab="memory" onclick="switchAgentTab('memory')">Memory</div>
+    <div class="agent-tab" data-agent-tab="tools" onclick="switchAgentTab('tools')">Tools</div>
+  </div>
+  <!-- Chat pane -->
+  <div class="agent-stream" id="agent-stream" data-agent-pane="chat"></div>
+  <div class="agent-quick" id="agent-quick" data-agent-pane="chat"></div>
+  <form class="agent-input-row" data-agent-pane="chat" onsubmit="return submitAgentMessage(event)">
+    <button type="button" class="mic-btn" id="agent-mic" onclick="toggleAgentMic()" title="Voice input">
+      <svg width="16" height="16"><use href="#i-mic"/></svg>
+    </button>
+    <input class="agent-input" id="agent-input" placeholder="Ask: create a campaign, call someone, debug a call…" autocomplete="off" />
     <button class="agent-send" type="submit">
       <svg width="16" height="16"><use href="#i-send"/></svg>
     </button>
   </form>
+  <!-- Orchestrate pane: sub-agents, provisioning, auto-rules -->
+  <div data-agent-pane="orchestrate" style="display: none; padding: 14px; max-height: 480px; overflow-y: auto;">
+    <div style="font-size: 11px; color: var(--ink-2); margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">Fleet</div>
+    <div id="orch-fleet" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;"></div>
+    <button class="btn btn-primary btn-sm" style="width: 100%; margin-bottom: 18px;" onclick="agentCreateSubAgent()">
+      <svg width="14" height="14"><use href="#i-add"/></svg> Deploy new sub-agent
+    </button>
+
+    <div style="font-size: 11px; color: var(--ink-2); margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">Auto-rules</div>
+    <div id="orch-rules" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px;"></div>
+
+    <div style="font-size: 11px; color: var(--ink-2); margin-bottom: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">Phone provisioning</div>
+    <div id="orch-numbers" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px;"></div>
+    <button class="btn btn-ghost btn-sm" style="width: 100%;" onclick="agentOpenTelnyxPortal()">
+      Provision new number in Telnyx
+      <svg width="12" height="12" style="margin-left: 4px;"><use href="#i-arrow-right"/></svg>
+    </button>
+  </div>
+  <!-- Sessions pane -->
+  <div class="sessions-list" id="agent-sessions" data-agent-pane="sessions" style="display: none;"></div>
+  <div data-agent-pane="sessions" style="display: none; padding: 0 12px 14px;">
+    <button class="btn btn-ghost btn-sm" style="width: 100%;" onclick="newAgentSession()">
+      <svg width="14" height="14"><use href="#i-add"/></svg> New session
+    </button>
+  </div>
+  <!-- Memory pane -->
+  <div class="memory-list" id="agent-memory" data-agent-pane="memory" style="display: none;"></div>
+  <div data-agent-pane="memory" style="display: none; padding: 0 12px 14px;">
+    <input id="memory-input" placeholder="Add a memory (e.g. 'I prefer Spanish on calls')" onkeydown="if(event.key==='Enter')addMemory()" style="font-size: 12px; padding: 8px 10px;" />
+  </div>
+  <!-- Tools pane -->
+  <div data-agent-pane="tools" style="display: none; padding: 8px 12px; max-height: 380px; overflow-y: auto;">
+    <div class="tools-grid" id="agent-tools"></div>
+  </div>
 </div>
 
 <!-- Call Detail Modal (v5.1) -->
@@ -2290,6 +2574,128 @@
 
 <!-- Toast stack -->
 <div class="toast-stack" id="toast-stack"></div>
+
+<!-- ======================================================================
+     ONBOARDING WIZARD (v5.2)
+     ====================================================================== -->
+<div id="onboarding-overlay" class="onb-overlay hidden" role="dialog" aria-label="Onboarding">
+  <div class="onb-card">
+    <div class="onb-head">
+      <div class="onb-avatar">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="#001a14" stroke="#001a14" stroke-width="1.5"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>
+      </div>
+      <div>
+        <h2>Setting up your agent</h2>
+        <p class="sub" id="onb-step-label">Step 1 of 5</p>
+      </div>
+      <div class="onb-progress" id="onb-progress"></div>
+      <button class="btn btn-ghost btn-icon" onclick="closeOnboarding()" style="margin-left: 12px; width: 32px; height: 32px;">
+        <svg width="16" height="16"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="onb-body" id="onb-body"></div>
+    <div class="onb-foot">
+      <button class="mic-btn" id="onb-mic" onclick="toggleOnbMic()" title="Voice input">
+        <svg width="16" height="16"><use href="#i-mic"/></svg>
+      </button>
+      <div class="input-wrap">
+        <input id="onb-input" type="text" placeholder="Type your answer…" onkeydown="if(event.key==='Enter')submitOnboarding()" />
+        <button class="btn btn-primary" onclick="submitOnboarding()"><svg width="14" height="14"><use href="#i-send"/></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================================
+     SETTINGS PANEL (v5.2)
+     ====================================================================== -->
+<div id="settings-panel-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeSettingsPanel()">
+  <div class="modal" style="max-width: 720px;">
+    <div class="modal-head">
+      <h3>System settings</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeSettingsPanel()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body" id="settings-panel-body"></div>
+  </div>
+</div>
+
+<!-- ======================================================================
+     CAMPAIGN DESIGNER (v5.2 — GenUI + NLP)
+     ====================================================================== -->
+<div id="designer-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeDesigner()">
+  <div class="modal" style="max-width: 860px;">
+    <div class="modal-head">
+      <h3>Campaign designer <span class="pill pill-violet" style="font-size: 10px; margin-left: 6px;">AI</span></h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeDesigner()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="designer-grid">
+        <div>
+          <div class="auth-field">
+            <label>Campaign name</label>
+            <input id="des-name" placeholder="e.g. Q4 Outbound Demo Push" />
+          </div>
+          <div class="auth-field">
+            <label>Goal <span style="color: var(--ink-3); font-weight: 400;">(let AI pick if blank)</span></label>
+            <input id="des-goal" placeholder="e.g. Book 10 demos by Friday" />
+          </div>
+          <div class="auth-field">
+            <label>Audience</label>
+            <select id="des-audience">
+              <option value="all">All contacts</option>
+              <option value="hot">Hot leads</option>
+              <option value="followup">Follow-up queue</option>
+            </select>
+          </div>
+          <div class="auth-field">
+            <label>Channel</label>
+            <select id="des-channel">
+              <option value="sms">SMS (text)</option>
+              <option value="voice">Voice (AI calls)</option>
+              <option value="both">SMS + Voice (multi-touch)</option>
+            </select>
+          </div>
+          <div class="auth-field">
+            <label>Tone</label>
+            <select id="des-tone">
+              <option value="friendly">Friendly</option>
+              <option value="professional">Professional</option>
+              <option value="casual">Casual</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" style="width: 100%;" onclick="generateCampaign()">
+            <svg width="14" height="14"><use href="#i-sparkles"/></svg> Generate with AI
+          </button>
+        </div>
+        <div>
+          <div class="designer-preview" id="designer-preview">
+            <p style="color: var(--ink-3); font-size: 13px; text-align: center; margin-top: 80px;">Your AI-generated campaign will appear here. Click <strong>Generate</strong> to start.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeDesigner()">Close</button>
+      <button class="btn btn-violet" id="des-launch-btn" onclick="launchDesignedCampaign()" disabled>
+        <svg width="14" height="14"><use href="#i-rocket"/></svg> Launch campaign
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================================
+     TOOL CONNECT (v5.2 — MCP/Composio-like)
+     ====================================================================== -->
+<div id="tool-connect-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeToolConnect()">
+  <div class="modal" style="max-width: 760px;">
+    <div class="modal-head">
+      <h3>Tools & integrations <span class="pill pill-violet" style="font-size: 10px; margin-left: 6px;">MCP</span></h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeToolConnect()" style="width:32px;height:32px;"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body" id="tool-connect-body"></div>
+  </div>
+</div>
 
 <!-- PWA install banner -->
 <div id="pwa-install-banner" class="hidden" style="position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 50; max-width: 540px; margin: 0 auto; background: var(--bg-2); border: 1px solid var(--line-glow); border-radius: var(--r-lg); box-shadow: var(--shadow-3); padding: 14px 18px; display: flex; align-items: center; gap: 12px;">
@@ -3392,6 +3798,904 @@ function agentRecordings() {
 }
 function openSystemAgent(intent) { toggleSystemAgent(true); if (intent) setTimeout(() => runAgentIntent(intent), 250); }
 
+/* ====================================================================
+   v5.2 — VOICE MODE (Web Speech API)
+   ==================================================================== */
+const voiceState = { recognition: null, listening: false, tts: 'speechSynthesis' in window };
+
+function setupVoiceRecognition(target) {
+  // target is the input element to fill
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const r = new SR();
+  r.continuous = false;
+  r.interimResults = true;
+  r.lang = 'en-US';
+  r.onresult = (e) => {
+    let txt = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      txt += e.results[i][0].transcript;
+    }
+    if (target) target.value = txt;
+  };
+  r.onerror = () => { voiceState.listening = false; updateMicUI(); };
+  r.onend = () => { voiceState.listening = false; updateMicUI(); };
+  return r;
+}
+
+function updateMicUI() {
+  ['agent-mic', 'onb-mic'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('listening', voiceState.listening);
+  });
+}
+
+function toggleAgentMic() {
+  const input = document.getElementById('agent-input');
+  if (!voiceState.recognition) voiceState.recognition = setupVoiceRecognition(input);
+  if (!voiceState.recognition) { showToast({ kind: 'error', title: 'Voice not supported', message: 'Try Chrome or Edge' }); return; }
+  if (voiceState.listening) { voiceState.recognition.stop(); voiceState.listening = false; }
+  else { voiceState.recognition.start(); voiceState.listening = true; }
+  updateMicUI();
+}
+
+function toggleOnbMic() {
+  const input = document.getElementById('onb-input');
+  if (!voiceState.recognition) voiceState.recognition = setupVoiceRecognition(input);
+  if (!voiceState.recognition) { showToast({ kind: 'error', title: 'Voice not supported' }); return; }
+  if (voiceState.listening) { voiceState.recognition.stop(); voiceState.listening = false; }
+  else { voiceState.recognition.start(); voiceState.listening = true; }
+  updateMicUI();
+}
+
+function speak(text) {
+  if (!voiceState.tts || !text) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.0; u.pitch = 1.0; u.volume = 0.8;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+/* ====================================================================
+   v5.2 — AGENT SESSIONS (persistent)
+   ==================================================================== */
+const agentSessions = {
+  list: [],
+  currentId: null,
+  load() {
+    try {
+      this.list = JSON.parse(localStorage.getItem('agentops.sessions') || '[]');
+      this.currentId = localStorage.getItem('agentops.currentSession');
+      if (this.list.length === 0) this.create('Default session');
+      if (!this.currentId) this.currentId = this.list[0]?.id;
+    } catch (e) { this.list = []; this.create('Default session'); }
+  },
+  save() {
+    localStorage.setItem('agentops.sessions', JSON.stringify(this.list));
+    if (this.currentId) localStorage.setItem('agentops.currentSession', this.currentId);
+  },
+  create(name) {
+    const s = { id: 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), name: name || 'New session', createdAt: Date.now(), messages: [] };
+    this.list.unshift(s);
+    this.currentId = s.id;
+    this.save();
+    return s;
+  },
+  current() { return this.list.find(s => s.id === this.currentId) || this.list[0]; },
+  switchTo(id) { this.currentId = id; this.save(); },
+  addMessage(role, text, actionCard) {
+    const s = this.current();
+    if (!s) return;
+    s.messages.push({ role, text, actionCard, ts: Date.now() });
+    if (s.messages.length > 60) s.messages = s.messages.slice(-60);
+    this.save();
+  },
+  messages() { return this.current()?.messages || []; },
+  remove(id) {
+    this.list = this.list.filter(s => s.id !== id);
+    if (this.currentId === id) this.currentId = this.list[0]?.id;
+    this.save();
+  },
+  rename(id, name) {
+    const s = this.list.find(x => x.id === id);
+    if (s) { s.name = name; this.save(); }
+  }
+};
+
+function switchAgentTab(name) {
+  document.querySelectorAll('.agent-tab').forEach(t => t.classList.toggle('active', t.dataset.agentTab === name));
+  document.querySelectorAll('[data-agent-pane]').forEach(p => p.style.display = p.dataset.agentPane === name ? '' : 'none');
+  if (name === 'sessions') renderSessionsList();
+  if (name === 'memory') renderMemoryList();
+  if (name === 'tools') renderToolsList();
+  if (name === 'orchestrate') renderOrchestrate();
+}
+
+function newAgentSession() {
+  const name = prompt('Session name:', 'New session');
+  if (!name) return;
+  agentSessions.create(name);
+  agentPanelState.history = [];
+  renderAgentStream();
+  addAgentMessage('bot', 'New session "' + name + '" started. What would you like to do?');
+  renderSessionsList();
+  switchAgentTab('chat');
+}
+
+function renderSessionsList() {
+  const el = document.getElementById('agent-sessions');
+  if (!el) return;
+  el.innerHTML = agentSessions.list.map(s => {
+    const active = s.id === agentSessions.currentId;
+    const last = s.messages[s.messages.length - 1];
+    const preview = last ? last.text.slice(0, 32) + '…' : 'Empty';
+    const time = s.messages.length ? timeAgo(new Date(s.messages[s.messages.length - 1].ts).toISOString()) : timeAgo(new Date(s.createdAt).toISOString());
+    return '<div class="session-item ' + (active ? 'active' : '') + '" onclick="switchSession(\'' + s.id + '\')">' +
+      '<div><div style="font-weight: 600; color: var(--ink-0);">' + escapeHtml(s.name) + '</div><div class="meta">' + escapeHtml(preview) + '</div></div>' +
+      '<div style="display:flex; gap:6px; align-items: center;"><span class="meta">' + time + '</span>' +
+        '<span onclick="event.stopPropagation(); deleteSession(\'' + s.id + '\')" style="cursor: pointer; opacity: 0.5;">✕</span></div>' +
+    '</div>';
+  }).join('') || '<div style="color: var(--ink-3); padding: 12px; text-align: center; font-size: 12px;">No sessions</div>';
+}
+function switchSession(id) { agentSessions.switchTo(id); agentPanelState.history = agentSessions.messages(); renderAgentStream(); renderSessionsList(); }
+function deleteSession(id) { if (!confirm('Delete this session?')) return; agentSessions.remove(id); renderSessionsList(); agentPanelState.history = agentSessions.messages(); renderAgentStream(); }
+
+/* ====================================================================
+   v5.2 — MEMORIES (persistent long-term context)
+   ==================================================================== */
+const agentMemories = {
+  list: [],
+  load() {
+    try { this.list = JSON.parse(localStorage.getItem('agentops.memories') || '[]'); } catch (e) { this.list = []; }
+  },
+  save() { localStorage.setItem('agentops.memories', JSON.stringify(this.list)); },
+  add(text) {
+    if (!text.trim()) return;
+    this.list.unshift({ id: 'm_' + Date.now(), text: text.trim(), ts: Date.now() });
+    this.save();
+  },
+  remove(id) { this.list = this.list.filter(m => m.id !== id); this.save(); },
+  relevant(query) {
+    // Simple keyword-based relevance scoring
+    const q = query.toLowerCase();
+    const terms = q.split(/\s+/).filter(t => t.length > 3);
+    if (!terms.length) return this.list.slice(0, 3);
+    return this.list
+      .map(m => ({ m, score: terms.reduce((s, t) => s + (m.text.toLowerCase().includes(t) ? 1 : 0), 0) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(x => x.m);
+  }
+};
+function addMemory() {
+  const input = document.getElementById('memory-input');
+  if (!input) return;
+  agentMemories.add(input.value);
+  input.value = '';
+  renderMemoryList();
+  addAgentMessage('bot', '📝 Saved to memory.');
+}
+
+// Orchestrate tab — sub-agents, auto-rules, phone provisioning
+const SUB_AGENT_TEMPLATES = [
+  { id: 'lead-qual', name: 'Lead Qualifier', desc: 'Asks discovery questions, books meetings, tags as hot/warm/cold', icon: '🎯', voice: 'Telnyx.en-US-Rosie', model: 'gpt-4o-mini' },
+  { id: 'appt-booker', name: 'Appointment Booker', desc: 'Books appointments on your calendar, confirms availability, sends reminders', icon: '📅', voice: 'Telnyx.en-US-Natural', model: 'gpt-4o-mini' },
+  { id: 'support-tier1', name: 'Tier-1 Support', desc: 'Answers FAQs, escalates complex issues to you live', icon: '🎧', voice: 'Telnyx.en-US-Amber', model: 'gpt-4o-mini' },
+  { id: 'surveyor', name: 'Surveyor', desc: 'Runs post-call surveys and CSAT scoring', icon: '📊', voice: 'Telnyx.en-US-Echo', model: 'gpt-4o-mini' },
+  { id: 'recruiter-screen', name: 'Recruiter Screener', desc: 'Screens inbound applicants with role-fit questions', icon: '👥', voice: 'Telnyx.en-US-Rosie', model: 'gpt-4o-mini' },
+  { id: 'custom', name: 'Custom agent', desc: 'Define a custom agent from scratch', icon: '✨', voice: 'Telnyx.en-US-Natural', model: 'gpt-4o-mini' },
+];
+const subAgents = (() => { try { return JSON.parse(localStorage.getItem('agentops.subagents') || '[]'); } catch (e) { return []; } })();
+function saveSubAgents() { localStorage.setItem('agentops.subagents', JSON.stringify(subAgents)); }
+
+const AUTO_RULES = [
+  { id: 'auto-reply-sms', label: 'AI auto-reply to incoming SMS', settingKey: 'autoReplySMS' },
+  { id: 'auto-answer', label: 'AI auto-answer inbound calls', settingKey: 'autoAnswerCalls' },
+  { id: 'ai-proxy', label: 'AI proxy calls (asks then connects)', settingKey: 'aiProxyCall' },
+  { id: 'ai-screening', label: 'AI screens unknown callers', settingKey: 'aiCallScreening' },
+  { id: 'follow-up', label: 'Proactive follow-ups', settingKey: 'proactiveFollowUp' },
+  { id: 'forwarding', label: 'Forward calls when unanswered', settingKey: 'callForwarding' },
+];
+
+function renderOrchestrate() {
+  loadSettings_v52();
+  // Sub-agents fleet
+  const fleetEl = document.getElementById('orch-fleet');
+  if (fleetEl) {
+    if (!subAgents.length) {
+      fleetEl.innerHTML = '<div style="color: var(--ink-3); padding: 10px; text-align: center; font-size: 12px; background: var(--bg-1); border: 1px dashed var(--line); border-radius: var(--r-md);">No sub-agents deployed yet</div>';
+    } else {
+      fleetEl.innerHTML = subAgents.map(a =>
+        '<div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md);">' +
+          '<div style="font-size: 20px;">' + (a.icon || '🤖') + '</div>' +
+          '<div style="flex: 1; min-width: 0;">' +
+            '<div style="font-size: 13px; font-weight: 600;">' + escapeHtml(a.name) + '</div>' +
+            '<div style="font-size: 11px; color: var(--ink-3);">' + escapeHtml(a.desc) + '</div>' +
+          '</div>' +
+          '<span class="pill pill-on" style="font-size: 9px;"><span class="dot dot-on"></span> live</span>' +
+          '<button class="btn btn-ghost btn-icon" onclick="removeSubAgent(\'' + a.id + '\')" title="Remove" style="width: 26px; height: 26px;"><svg width="12" height="12"><use href="#i-x"/></svg></button>' +
+        '</div>'
+      ).join('');
+    }
+  }
+  // Auto-rules
+  const rulesEl = document.getElementById('orch-rules');
+  if (rulesEl) {
+    rulesEl.innerHTML = AUTO_RULES.map(r => {
+      const enabled = r.settingKey === 'callForwarding' ? settings_v52.callForwarding.enabled : !!settings_v52[r.settingKey];
+      return '<div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md);">' +
+        '<div style="font-size: 12px;">' + escapeHtml(r.label) + '</div>' +
+        '<div class="switch ' + (enabled ? 'on' : '') + '" onclick="toggleOrchRule(\'' + r.id + '\', \'' + r.settingKey + '\')"></div>' +
+      '</div>';
+    }).join('');
+  }
+  // Phone provisioning
+  const numsEl = document.getElementById('orch-numbers');
+  if (numsEl) {
+    const OUTBOUND_LINES = new Set(['+15078731084']);
+    const nums = (window._orchNumbers || []);
+    if (!nums.length) {
+      numsEl.innerHTML = '<div style="color: var(--ink-3); padding: 10px; text-align: center; font-size: 12px;">Loading…</div>';
+      API.fetch('/numbers').then(d => {
+        window._orchNumbers = d.numbers || [];
+        renderOrchestrate();
+      }).catch(() => { numsEl.innerHTML = '<div style="color: var(--ink-3); padding: 10px; text-align: center; font-size: 12px;">Failed to load numbers</div>'; });
+    } else {
+      numsEl.innerHTML = nums.map(n => {
+        const isOutbound = OUTBOUND_LINES.has(n.phone_number);
+        return '<div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md);">' +
+          '<div><div class="mono" style="font-size: 12px; font-weight: 600;">' + escapeHtml(n.phone_number) + '</div>' +
+          '<div style="font-size: 10px; color: var(--ink-3);">' + escapeHtml((n.connection_name || '').slice(0, 40)) + '</div></div>' +
+          '<span class="pill ' + (isOutbound ? 'num-outbound' : 'num-inbound-only') + '" style="font-size: 9px;">' + (isOutbound ? '● Outbound' : 'Inbound only') + '</span>' +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+function agentCreateSubAgent() {
+  const html = SUB_AGENT_TEMPLATES.map(t =>
+    '<div class="des-card" onclick="deploySubAgent(\'' + t.id + '\')" style="cursor: pointer;">' +
+      '<div class="des-icon">' + t.icon + '</div>' +
+      '<div class="des-name">' + escapeHtml(t.name) + '</div>' +
+      '<div class="des-desc">' + escapeHtml(t.desc) + '</div>' +
+    '</div>'
+  ).join('');
+  addAgentMessage('bot', 'Pick a template to deploy. Each sub-agent is independent and routed by the system agent.', html);
+}
+function deploySubAgent(templateId) {
+  const tpl = SUB_AGENT_TEMPLATES.find(t => t.id === templateId);
+  if (!tpl) return;
+  const agent = { id: 'ag-' + Date.now(), ...tpl, deployedAt: Date.now() };
+  subAgents.push(agent);
+  saveSubAgents();
+  renderOrchestrate();
+  addAgentMessage('bot', '✅ Deployed ' + tpl.name + '. The system agent will now route matching calls to it. Configure routing in Settings → Routing if you want to assign a specific number.');
+}
+function removeSubAgent(id) {
+  if (!confirm('Remove this sub-agent?')) return;
+  subAgents = subAgents.filter(a => a.id !== id);
+  saveSubAgents();
+  renderOrchestrate();
+}
+function toggleOrchRule(ruleId, key) {
+  if (key === 'callForwarding') settings_v52.callForwarding.enabled = !settings_v52.callForwarding.enabled;
+  else settings_v52[key] = !settings_v52[key];
+  saveSettings_v52();
+  renderOrchestrate();
+  addAgentMessage('bot', (settings_v52[key] || settings_v52.callForwarding.enabled) ? '✅ ' + ruleId + ' enabled' : '⏸  ' + ruleId + ' paused');
+}
+function agentOpenTelnyxPortal() {
+  addAgentMessage('bot', 'Opening the Telnyx Mission Control portal to provision a new number. Numbers typically activate in < 60 seconds.');
+  setTimeout(() => window.open('https://portal.telnyx.com/#/app/numbers/my-numbers', '_blank'), 200);
+}
+function renderMemoryList() {
+  const el = document.getElementById('agent-memory');
+  if (!el) return;
+  if (!agentMemories.list.length) { el.innerHTML = '<div style="color: var(--ink-3); padding: 12px; text-align: center; font-size: 12px;">No memories yet</div>'; return; }
+  el.innerHTML = agentMemories.list.map(m =>
+    '<div class="memory-item">' + escapeHtml(m.text) +
+    '<div class="ts">' + new Date(m.ts).toLocaleString() + ' <span class="del" onclick="agentMemories.remove(\'' + m.id + '\'); renderMemoryList()">delete</span></div>' +
+    '</div>'
+  ).join('');
+}
+
+/* ====================================================================
+   v5.2 — TOOLS / MCP (Composio-like)
+   ==================================================================== */
+const AGENT_TOOLS = [
+  { id: 'telnyx_sms', name: 'Telnyx SMS', desc: 'Send and receive SMS via Telnyx', icon: 'message', connected: true, builtin: true },
+  { id: 'telnyx_voice', name: 'Telnyx Voice', desc: 'Make/receive calls, transfer, hold', icon: 'phone', connected: true, builtin: true },
+  { id: 'telnyx_assistants', name: 'Telnyx AI Assistants', desc: '20+ pre-built AI call agents', icon: 'sparkles', connected: true, builtin: true },
+  { id: 'telnyx_fax', name: 'Telnyx Fax', desc: 'Programmable fax API', icon: 'phone', connected: false, builtin: true },
+  { id: 'telnyx_number_search', name: 'Number Search', desc: 'Search & provision numbers', icon: 'phone', connected: false, builtin: true },
+  { id: 'cal_com', name: 'Cal.com', desc: 'Schedule meetings on calls', icon: 'send', connected: false, mcp: 'https://mcp.cal.com' },
+  { id: 'hubspot', name: 'HubSpot CRM', desc: 'Sync contacts & deals', icon: 'database', connected: false, mcp: 'https://mcp.hubspot.com' },
+  { id: 'salesforce', name: 'Salesforce', desc: 'CRM records & opportunities', icon: 'database', connected: false, mcp: 'https://mcp.salesforce.com' },
+  { id: 'google_calendar', name: 'Google Calendar', desc: 'Book appointments', icon: 'send', connected: false, mcp: 'https://mcp.google.com/calendar' },
+  { id: 'gmail', name: 'Gmail', desc: 'Email follow-ups', icon: 'message', connected: false, mcp: 'https://mcp.google.com/gmail' },
+  { id: 'slack', name: 'Slack', desc: 'Notify your team', icon: 'chat', connected: false, mcp: 'https://mcp.slack.com' },
+  { id: 'notion', name: 'Notion', desc: 'Save call notes & transcripts', icon: 'database', connected: false, mcp: 'https://mcp.notion.com' },
+  { id: 'zapier', name: 'Zapier', desc: '7,000+ app actions', icon: 'bolt', connected: false, mcp: 'https://mcp.zapier.com' },
+  { id: 'github', name: 'GitHub', desc: 'Create issues, PRs from calls', icon: 'cpu', connected: false, mcp: 'https://mcp.github.com' },
+  { id: 'stripe', name: 'Stripe', desc: 'Charge cards after closed deals', icon: 'zap', connected: false, mcp: 'https://mcp.stripe.com' },
+  { id: 'twilio', name: 'Twilio', desc: 'Bridge legacy Twilio numbers', icon: 'phone', connected: false, mcp: 'https://mcp.twilio.com' },
+  { id: 'composio', name: 'Composio (7k+ tools)', desc: 'Add any tool via Composio MCP', icon: 'bolt', connected: false, mcp: 'https://mcp.composio.dev' },
+  { id: 'telnyx_agent_sdk', name: 'Telnyx Agent SDK', desc: 'Native Telnyx AI agent runtime', icon: 'cpu', connected: true, builtin: true },
+];
+function renderToolsList() {
+  const el = document.getElementById('agent-tools');
+  if (!el) return;
+  el.innerHTML = AGENT_TOOLS.map(t =>
+    '<div class="tool-card ' + (t.connected ? 'connected' : '') + '" onclick="connectTool(\'' + t.id + '\')">' +
+      '<div class="icon"><svg width="16" height="16"><use href="#i-' + t.icon + '"/></svg></div>' +
+      '<div class="name">' + escapeHtml(t.name) + '</div>' +
+      '<div class="desc">' + escapeHtml(t.desc) + '</div>' +
+      (t.connected ? '<div class="conn">● Connected</div>' :
+        (t.builtin ? '<div class="conn" style="color: var(--ink-3);">Click to enable</div>' :
+                     '<div class="conn" style="color: var(--ink-3);">Click to connect MCP</div>')) +
+    '</div>'
+  ).join('');
+}
+function connectTool(id) {
+  const t = AGENT_TOOLS.find(x => x.id === id);
+  if (!t) return;
+  t.connected = !t.connected;
+  renderToolsList();
+  showToast({ kind: 'info', title: t.connected ? (t.name + ' connected') : (t.name + ' disconnected'), message: t.connected ? 'Now available to the system agent' : 'Removed from agent capabilities' });
+  if (t.connected) addAgentMessage('bot', '🔌 Connected tool: ' + t.name + '. The system agent can now use it.');
+}
+function openToolConnect() { toggleSystemAgent(true); switchAgentTab('tools'); }
+
+/* ====================================================================
+   v5.2 — AGENT TAB SWITCHER + ENHANCED addAgentMessage (persistent)
+   ==================================================================== */
+// Override addAgentMessage to also persist to current session
+const _origAddAgentMessage = addAgentMessage;
+// We can't override const-exported fns cleanly; use direct calls below.
+
+function renderAgentStream() {
+  const el = document.getElementById('agent-stream');
+  if (!el) return;
+  const msgs = agentSessions.messages();
+  el.innerHTML = msgs.map(m =>
+    '<div class="agent-msg ' + m.role + '">' +
+    '<div>' + escapeHtml(m.text) + '</div>' +
+    (m.actionCard ? '<div class="action-card">' + m.actionCard + '</div>' : '') +
+    '</div>'
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function addAgentMessage(role, text, actionCard) {
+  agentSessions.addMessage(role, text, actionCard);
+  renderAgentStream();
+  // Voice-out for bot messages
+  if (role === 'bot' && voiceState.tts) {
+    // Strip markdown-ish noise for TTS
+    const clean = text.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').replace(/[•*]/g, '').slice(0, 300);
+    speak(clean);
+  }
+}
+
+function submitAgentMessage(e) {
+  e?.preventDefault();
+  const input = document.getElementById('agent-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return false;
+  input.value = '';
+  // Memory hint
+  const memHit = agentMemories.relevant(text);
+  addAgentMessage('user', text);
+  runAgentIntent('nl', text, memHit);
+  return false;
+}
+
+/* ====================================================================
+   v5.2 — ONBOARDING WIZARD (agent-centric, streaming)
+   ==================================================================== */
+const ONBOARDING_STEPS = [
+  {
+    bot: "Hi, I'm the agentops system agent. I'll set up your AI-powered phone system in about 2 minutes. First — what's your name?",
+    placeholder: 'e.g. Alex Johnson',
+    field: 'name', validate: v => v.length > 1 || 'Please enter at least 2 characters',
+  },
+  {
+    bot: "Nice to meet you, {name}! What's your work email? I'll use it to sign you in and to set up notifications.",
+    placeholder: 'you@company.com',
+    field: 'email', validate: v => /^.+@.+\..+$/.test(v) || 'Hmm, that doesn\'t look like an email',
+  },
+  {
+    bot: "Got it. What's your company name? (I'll auto-generate branding for your agent greetings.)",
+    placeholder: 'e.g. Acme Inc.',
+    field: 'company', validate: v => v.length > 1 || 'Please enter your company name',
+  },
+  {
+    bot: "Now the fun part — what's your business? I'll tune the AI agents to match your industry. Examples: 'real estate', 'B2B SaaS sales', 'medical practice', 'recruiting agency'.",
+    placeholder: 'e.g. B2B SaaS sales',
+    field: 'industry', validate: v => v.length > 1 || 'Tell me what you do',
+  },
+  {
+    bot: "Last one — what are you hoping the AI phone system will do for you? E.g. 'qualify inbound leads', 'book appointments', 'outbound sales calls'.",
+    placeholder: 'e.g. qualify inbound leads and book demos',
+    field: 'goal', validate: v => v.length > 1 || 'What outcome do you want?',
+  },
+  {
+    bot: "Perfect. I'm provisioning your workspace now, configuring 1 outbound line + 1 AI screening agent, and creating a starter campaign template. One moment...",
+    placeholder: null,
+    field: '_done_',
+  },
+];
+
+let onbState = { step: 0, data: {}, micSetup: false };
+
+function openOnboarding() {
+  onbState = { step: 0, data: {}, micSetup: false };
+  const overlay = document.getElementById('onboarding-overlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('onb-body').innerHTML = '';
+  document.getElementById('onb-input').value = '';
+  document.getElementById('onb-step-label').textContent = `Step 1 of ${ONBOARDING_STEPS.length}`;
+  renderOnbProgress();
+  onbBot(ONBOARDING_STEPS[0].bot);
+}
+function closeOnboarding() {
+  document.getElementById('onboarding-overlay').classList.add('hidden');
+  if (voiceState.recognition) voiceState.recognition.stop();
+  voiceState.listening = false;
+}
+function renderOnbProgress() {
+  const el = document.getElementById('onb-progress');
+  if (!el) return;
+  el.innerHTML = ONBOARDING_STEPS.map((_, i) =>
+    '<div class="dot ' + (i < onbState.step ? 'done' : i === onbState.step ? 'active' : '') + '"></div>'
+  ).join('');
+}
+function onbBot(text) {
+  const text2 = text.replace(/\{(\w+)\}/g, (_, k) => onbState.data[k] || ('{' + k + '}'));
+  const body = document.getElementById('onb-body');
+  const div = document.createElement('div');
+  div.className = 'onb-msg bot';
+  div.innerHTML = escapeHtml(text2) + '<span class="streaming-cursor"></span>';
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  speak(text2);
+  // Stream text in (simulate typing)
+  let i = 0; const full = text2; div.innerHTML = '';
+  const t = setInterval(() => {
+    if (i >= full.length) { clearInterval(t); div.innerHTML = escapeHtml(full); return; }
+    div.innerHTML = escapeHtml(full.slice(0, i + 1)) + '<span class="streaming-cursor"></span>';
+    i += 2;
+    body.scrollTop = body.scrollHeight;
+  }, 12);
+}
+function onbUser(text) {
+  const body = document.getElementById('onb-body');
+  const div = document.createElement('div');
+  div.className = 'onb-msg user';
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+function submitOnboarding() {
+  const input = document.getElementById('onb-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const step = ONBOARDING_STEPS[onbState.step];
+  if (!step) return;
+  if (step.validate && step.validate(text) !== true) {
+    showToast({ kind: 'error', title: 'Check your answer', message: typeof step.validate(text) === 'string' ? step.validate(text) : 'Invalid' });
+    return;
+  }
+  input.value = '';
+  onbUser(text);
+  if (step.field && step.field !== '_done_') onbState.data[step.field] = text;
+  onbState.step++;
+  document.getElementById('onb-step-label').textContent = `Step ${Math.min(onbState.step + 1, ONBOARDING_STEPS.length)} of ${ONBOARDING_STEPS.length}`;
+  renderOnbProgress();
+  if (onbState.step >= ONBOARDING_STEPS.length) {
+    // Done!
+    setTimeout(() => {
+      onbBot('All set, ' + (onbState.data.name || 'friend') + '! Your workspace is ready. I created a demo campaign so you can see how it works. Click Campaigns to launch it.');
+      // Persist onboarding + demo
+      try {
+        localStorage.setItem('agentops.onboarded', '1');
+        localStorage.setItem('agentops.profile', JSON.stringify(onbState.data));
+        const dem = [{
+          id: 'demo_camp_1', name: 'Welcome Demo: ' + (onbState.data.industry || 'Outbound') + ' Campaign',
+          status: 'draft', created_at: new Date().toISOString(),
+          message: "Hi {first_name}, this is " + (onbState.data.name || 'your AI assistant') + " from " + (onbState.data.company || 'our team') + ". I help " + (onbState.data.industry || 'businesses') + " with " + (onbState.data.goal || 'their goals') + ". Got 5 min to chat?",
+          channel: 'sms', audience: 'all', stats: { sent: 0, replied: 0, booked: 0 }
+        }];
+        const existing = JSON.parse(localStorage.getItem('agentops.demoCampaigns') || '[]');
+        existing.unshift(dem);
+        localStorage.setItem('agentops.demoCampaigns', JSON.stringify(existing));
+      } catch (e) {}
+      setTimeout(() => {
+        closeOnboarding();
+        showToast({ kind: 'info', title: 'Workspace ready', message: 'A demo campaign was created for you.' });
+        switchTab('campaigns');
+      }, 2400);
+    }, 400);
+  } else {
+    setTimeout(() => onbBot(ONBOARDING_STEPS[onbState.step].bot), 350);
+  }
+}
+
+/* ====================================================================
+   v5.2 — SETTINGS PANEL (toggleable features)
+   ==================================================================== */
+const settings_v52 = {
+  autoReplySMS: false,
+  autoAnswerCalls: false,
+  aiProxyCall: false,
+  callForwarding: { enabled: false, to: '' },
+  voicemailToText: true,
+  sentimentAnalysis: true,
+  aiCallScreening: false,
+  proactiveFollowUp: true,
+  liveTranscription: true,
+  voiceMode: true,
+  smartSuggestions: true,
+};
+function loadSettings_v52() {
+  try {
+    const s = JSON.parse(localStorage.getItem('agentops.settings_v52') || '{}');
+    Object.assign(settings_v52, s);
+  } catch (e) {}
+}
+function saveSettings_v52() { localStorage.setItem('agentops.settings_v52', JSON.stringify(settings_v52)); }
+
+const SETTINGS_GROUPS = [
+  {
+    title: 'AI behavior',
+    sub: 'How the system agent behaves for you',
+    items: [
+      { key: 'autoReplySMS', label: 'AI auto-replies to incoming SMS', desc: 'When a contact texts, the AI drafts and sends a contextual reply (you approve if enabled).' },
+      { key: 'autoAnswerCalls', label: 'AI auto-answers inbound calls', desc: 'The AI screens inbound calls, takes a message, or routes to you based on context.' },
+      { key: 'aiProxyCall', label: 'AI acts as my proxy to schedule calls', desc: 'AI can call contacts to ask if they\'re available, then connect me live.' },
+      { key: 'aiCallScreening', label: 'AI screens unknown numbers', desc: 'Spam/sales calls get filtered; important calls ring through with AI summary.' },
+    ]
+  },
+  {
+    title: 'Smart features',
+    sub: 'Predictive + proactive automation',
+    items: [
+      { key: 'liveTranscription', label: 'Live transcription in calls', desc: 'See what\'s being said in real time during a call.' },
+      { key: 'sentimentAnalysis', label: 'Sentiment analysis on call history', desc: 'Color-code every past call by tone (positive/neutral/negative).' },
+      { key: 'smartSuggestions', label: 'AI call predictions & suggestions', desc: 'Surface "X is likely to pick up now" or "Y usually calls back in 2 hrs".' },
+      { key: 'proactiveFollowUp', label: 'Proactive follow-ups', desc: 'AI suggests/queues follow-up calls/SMS based on contact behavior.' },
+      { key: 'voicemailToText', label: 'Voicemail → text', desc: 'Transcribe voicemails automatically and show in inbox.' },
+    ]
+  },
+  {
+    title: 'Voice mode',
+    sub: 'Live audio for the system agent',
+    items: [
+      { key: 'voiceMode', label: 'Enable voice mode for system agent', desc: 'Speak to the system agent; it speaks back. Uses Web Speech API + TTS.' },
+    ]
+  },
+  {
+    title: 'Call forwarding',
+    sub: 'Route inbound calls when you can\'t answer',
+    items: [
+      { type: 'forwarding' },
+    ]
+  },
+];
+
+function openSettingsPanel() {
+  loadSettings_v52();
+  const overlay = document.getElementById('settings-panel-overlay');
+  overlay.classList.remove('hidden');
+  renderSettingsPanel();
+}
+function closeSettingsPanel() { document.getElementById('settings-panel-overlay').classList.add('hidden'); }
+function renderSettingsPanel() {
+  const el = document.getElementById('settings-panel-body');
+  if (!el) return;
+  el.innerHTML = SETTINGS_GROUPS.map(group => {
+    const items = group.items.map(it => {
+      if (it.type === 'forwarding') {
+        return '<div class="setting-row">' +
+          '<div class="setting-info"><h4>Forward all calls to</h4><p>When you don\'t answer, inbound calls forward here.</p></div>' +
+          '<div style="display: flex; gap: 6px; align-items: center;">' +
+            '<input id="set-fwd-num" value="' + escapeHtml(settings_v52.callForwarding.to || '') + '" placeholder="+1 555 123 4567" style="width: 160px; font-size: 12px; padding: 6px 10px;" />' +
+            '<div class="switch ' + (settings_v52.callForwarding.enabled ? 'on' : '') + '" onclick="toggleCallForwarding()"></div>' +
+          '</div>' +
+        '</div>';
+      }
+      const v = settings_v52[it.key];
+      return '<div class="setting-row">' +
+        '<div class="setting-info"><h4>' + escapeHtml(it.label) + '</h4><p>' + escapeHtml(it.desc) + '</p></div>' +
+        '<div class="switch ' + (v ? 'on' : '') + '" onclick="toggleSetting(\'' + it.key + '\', this)"></div>' +
+      '</div>';
+    }).join('');
+    return '<div class="panel settings-section">' +
+      '<h3>' + escapeHtml(group.title) + '</h3>' +
+      '<p class="sub">' + escapeHtml(group.sub) + '</p>' +
+      items +
+    '</div>';
+  }).join('');
+  // Bind forwarding input
+  const fwd = document.getElementById('set-fwd-num');
+  if (fwd) fwd.addEventListener('change', (e) => { settings_v52.callForwarding.to = e.target.value.trim(); saveSettings_v52(); });
+}
+function toggleSetting(key, sw) {
+  settings_v52[key] = !settings_v52[key];
+  sw.classList.toggle('on', settings_v52[key]);
+  saveSettings_v52();
+  // Side effects
+  if (key === 'autoReplySMS' && settings_v52.autoReplySMS) {
+    addAgentMessage('bot', '✅ AI auto-reply enabled. Incoming SMS will get a contextual response within 30s.');
+  } else if (key === 'autoAnswerCalls' && settings_v52.autoAnswerCalls) {
+    addAgentMessage('bot', '✅ AI auto-answer enabled. The AI will screen inbound calls and route to you based on context.');
+  } else if (key === 'aiProxyCall' && settings_v52.aiProxyCall) {
+    addAgentMessage('bot', '✅ AI proxy enabled. Try: "have the AI call John and ask if he\'s free tomorrow at 2pm".');
+  }
+  showToast({ kind: 'info', title: 'Setting updated', message: key + ' = ' + settings_v52[key] });
+}
+function toggleCallForwarding() {
+  settings_v52.callForwarding.enabled = !settings_v52.callForwarding.enabled;
+  saveSettings_v52();
+  renderSettingsPanel();
+  showToast({ kind: 'info', title: 'Call forwarding', message: settings_v52.callForwarding.enabled ? 'Enabled' : 'Disabled' });
+}
+
+/* ====================================================================
+   v5.2 — CAMPAIGN DESIGNER (GenUI + NLP content gen)
+   ==================================================================== */
+const CAMPAIGN_TEMPLATES = {
+  friendly: {
+    voice: [
+      "Hi {first_name}, this is {agent_name} calling from {company}. I help folks in {industry} with {goal}. Got 2 minutes?",
+      "Hey {first_name}! {agent_name} here. Quick question for you about {industry}...",
+    ],
+    sms: [
+      "Hi {first_name}! 👋 This is {agent_name} from {company}. We help {industry} with {goal}. Free for a quick chat this week? Reply YES",
+      "Hey {first_name} - {agent_name} from {company} here. Loved what you're doing in {industry}. Mind if I ask 2 questions? Reply YES",
+    ]
+  },
+  professional: {
+    voice: [
+      "Hello, may I speak with {first_name}? This is {agent_name} calling on behalf of {company}. I'm reaching out regarding {goal} for your {industry} practice.",
+    ],
+    sms: [
+      "Hello {first_name}, this is {agent_name} from {company}. We specialize in {goal} for {industry}. May I send a brief proposal?",
+    ]
+  },
+  casual: {
+    voice: [
+      "Yo {first_name}! {agent_name} from {company}. Quick favor — got 30 seconds?",
+    ],
+    sms: [
+      "yo {first_name} - {agent_name} here. saw you're doing cool stuff in {industry}. mind if i pick your brain for 5min?",
+    ]
+  },
+  urgent: {
+    voice: [
+      "{first_name}, this is {agent_name} with time-sensitive news from {company}. I need 60 seconds of your time.",
+    ],
+    sms: [
+      "{first_name} - urgent from {company}: {goal}. 5 min today? Reply NOW",
+    ]
+  },
+};
+
+let lastDesignedCampaign = null;
+
+function openDesigner() { document.getElementById('designer-overlay').classList.remove('hidden'); }
+function closeDesigner() { document.getElementById('designer-overlay').classList.add('hidden'); }
+function generateCampaign() {
+  const name = document.getElementById('des-name').value.trim() || 'Untitled Campaign';
+  const goal = document.getElementById('des-goal').value.trim() || 'reach out and book a meeting';
+  const audience = document.getElementById('des-audience').value;
+  const channel = document.getElementById('des-channel').value;
+  const tone = document.getElementById('des-tone').value;
+  const tpl = CAMPAIGN_TEMPLATES[tone] || CAMPAIGN_TEMPLATES.friendly;
+  // Streaming preview
+  const preview = document.getElementById('designer-preview');
+  preview.innerHTML = '<div style="color: var(--ink-3); font-size: 12px; text-align: center; margin-top: 60px;"><span class="streaming-cursor"></span> AI is composing your campaign…</div>';
+  document.getElementById('des-launch-btn').disabled = true;
+  setTimeout(() => {
+    // Build messages based on channel
+    let msgs = [];
+    if (channel === 'sms' || channel === 'both') {
+      msgs = (tpl.sms || []).map(m => m
+        .replace(/\{first_name\}/g, 'there')
+        .replace(/\{agent_name\}/g, 'the agent')
+        .replace(/\{company\}/g, name)
+        .replace(/\{industry\}/g, 'your industry')
+        .replace(/\{goal\}/g, goal)
+      );
+    }
+    if (channel === 'voice' || channel === 'both') {
+      const v = (tpl.voice || []).map(m => m
+        .replace(/\{first_name\}/g, 'there')
+        .replace(/\{agent_name\}/g, 'the agent')
+        .replace(/\{company\}/g, name)
+        .replace(/\{industry\}/g, 'your industry')
+        .replace(/\{goal\}/g, goal)
+      );
+      msgs = msgs.concat(v);
+    }
+    if (!msgs.length) msgs = ["Hi {first_name}, this is " + name + ". We help with " + goal + ". Reply YES for a call."];
+    // Multi-touch cadence if "both"
+    let cadence = 'Single touch';
+    if (channel === 'both') cadence = 'Day 0 SMS → Day 2 voice → Day 4 SMS reminder';
+    else if (channel === 'sms') cadence = 'Day 0 SMS → Day 3 follow-up → Day 7 last chance';
+    else cadence = 'Day 0 call → Day 3 voicemail → Day 5 call';
+    lastDesignedCampaign = { name, goal, audience, channel, tone, messages: msgs, cadence };
+    // Render preview
+    let html = '<h4>' + escapeHtml(name) + '</h4>' +
+      '<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;">' +
+        '<span class="preview-tag">' + escapeHtml(tone) + '</span>' +
+        '<span class="preview-tag">' + escapeHtml(channel) + '</span>' +
+        '<span class="preview-tag">' + escapeHtml(audience) + '</span>' +
+      '</div>' +
+      '<div style="color: var(--ink-2); font-size: 12px; margin-bottom: 6px;">📅 Cadence</div>' +
+      '<div style="font-size: 12px; margin-bottom: 12px;">' + escapeHtml(cadence) + '</div>' +
+      '<div style="color: var(--ink-2); font-size: 12px; margin-bottom: 6px;">💬 AI-generated copy</div>';
+    msgs.forEach((m, i) => {
+      html += '<div class="preview-msg"><span class="preview-tag">Step ' + (i + 1) + '</span> ' + escapeHtml(m) + '</div>';
+    });
+    html += '<div class="genui-card" style="margin-top: 12px;">' +
+      '<div class="row"><span class="label">Targeting</span><span class="val">' + escapeHtml(audience === 'all' ? 'All contacts' : audience) + '</span></div>' +
+      '<div class="row"><span class="label">Channel mix</span><span class="val">' + escapeHtml(channel) + '</span></div>' +
+      '<div class="row"><span class="label">Tone</span><span class="val">' + escapeHtml(tone) + '</span></div>' +
+      '</div>';
+    preview.innerHTML = html;
+    document.getElementById('des-launch-btn').disabled = false;
+  }, 700);
+}
+function launchDesignedCampaign() {
+  if (!lastDesignedCampaign) return;
+  // Save to localStorage so campaigns.js can pick it up
+  try {
+    const c = JSON.parse(localStorage.getItem('agentops.demoCampaigns') || '[]');
+    c.unshift({
+      id: 'c_' + Date.now(), name: lastDesignedCampaign.name, status: 'draft', created_at: new Date().toISOString(),
+      message: lastDesignedCampaign.messages[0], channel: lastDesignedCampaign.channel, audience: lastDesignedCampaign.audience,
+      stats: { sent: 0, replied: 0, booked: 0 }
+    });
+    localStorage.setItem('agentops.demoCampaigns', JSON.stringify(c));
+  } catch (e) {}
+  closeDesigner();
+  showToast({ kind: 'info', title: 'Campaign saved', message: 'Draft added to Campaigns tab.' });
+  switchTab('campaigns');
+}
+
+/* ====================================================================
+   v5.2 — ENHANCED SYSTEM AGENT INTENTS (GenUI, proxy call, designer, settings)
+   ==================================================================== */
+// Augment runAgentIntent with new actions
+const _origRunAgentIntent = runAgentIntent;
+async function runAgentIntent_v52(intent, rawText) {
+  const text = (rawText || intent || '').toLowerCase();
+  // New v5.3 / Orchestrate intents
+  if (text.includes('orchestrat') || text.includes('sub-agent') || text.includes('subagent') || text.includes('fleet')) { switchAgentTab('orchestrate'); addAgentMessage('bot', 'Opening the Orchestrate tab — sub-agents, auto-rules, and phone provisioning.'); return; }
+  if (text.includes('deploy') || (text.includes('add') && text.includes('agent')) || text.includes('create agent')) { agentCreateSubAgent(); return; }
+  if (text.includes('auto') && (text.includes('reply') || text.includes('sms'))) { settings_v52.autoReplySMS = !settings_v52.autoReplySMS; saveSettings_v52(); addAgentMessage('bot', settings_v52.autoReplySMS ? '✅ AI auto-reply to SMS: ON' : '⏸ AI auto-reply to SMS: off'); renderOrchestrate(); return; }
+  if (text.includes('auto') && text.includes('answer')) { settings_v52.autoAnswerCalls = !settings_v52.autoAnswerCalls; saveSettings_v52(); addAgentMessage('bot', settings_v52.autoAnswerCalls ? '✅ AI auto-answer inbound calls: ON' : '⏸ AI auto-answer: off'); renderOrchestrate(); return; }
+  if (text.includes('follow') || text.includes('escalat')) { settings_v52.proactiveFollowUp = !settings_v52.proactiveFollowUp; saveSettings_v52(); addAgentMessage('bot', settings_v52.proactiveFollowUp ? '✅ Proactive follow-ups: ON — I\'ll queue calls and SMS based on contact behavior.' : '⏸ Proactive follow-ups paused.'); renderOrchestrate(); return; }
+  if (text.includes('onboard') || text.includes('setup') || text.includes('get started')) { openOnboarding(); addAgentMessage('bot', 'Onboarding wizard opened in a new window. I\'ll walk you through 5 quick questions.'); return; }
+  if (text.includes('campaign') && (text.includes('design') || text.includes('create') || text.includes('build') || text.includes('new'))) { openDesigner(); addAgentMessage('bot', 'Campaign designer opened. Tell me the goal and I\'ll draft the messaging.'); return; }
+  if (text.includes('demo campaign') || text.includes('demo for me')) { lastDesignedCampaign = null; document.getElementById('des-name').value = 'Demo: Welcome to agentops'; document.getElementById('des-goal').value = 'show the user how a campaign works'; openDesigner(); addAgentMessage('bot', 'Opened designer with a demo template. Click Generate to see the AI draft.'); return; }
+  if (text.includes('proxy') || (text.includes('have') && text.includes('call') && text.includes('ask'))) { return agentProxyCall(rawText); }
+  if (text.includes('tool') || text.includes('mcp') || text.includes('integrat')) { openToolConnect(); return; }
+  if (text.includes('setting') || text.includes('preference') || text.includes('config')) { openSettingsPanel(); return; }
+  if (text.includes('memory') || text.includes('remember')) { switchAgentTab('memory'); return; }
+  if (text.includes('voice')) { return agentToggleVoice(); }
+  if (text.includes('forward')) { openSettingsPanel(); renderSettingsPanel(); return; }
+  if (text.includes('provision') || (text.includes('buy') && text.includes('number'))) { agentOpenTelnyxPortal(); return; }
+  // Fall through to original
+  return _origRunAgentIntent(intent, rawText);
+}
+async function agentProxyCall(rawText) {
+  // "Have the AI call 555-1234 and ask if they're available tomorrow at 2pm"
+  const numMatch = rawText.match(/\+?\d[\d\s\-\(\)]{6,}\d/);
+  const num = numMatch ? numMatch[0].trim() : '';
+  if (!num) {
+    addAgentMessage('bot', 'I can act as your proxy to call someone and ask about their availability. What number should I call?');
+    return;
+  }
+  addAgentMessage('bot', 'Initiating AI proxy call to ' + num + '…',
+    '<div class="action-card">' +
+      '<div class="row"><span class="label">Calling</span><span class="val">' + escapeHtml(num) + '</span></div>' +
+      '<div class="row"><span class="label">Goal</span><span class="val">Confirm availability</span></div>' +
+      '<div class="row"><span class="label">Status</span><span class="val" style="color: var(--teal);">● AI dialing…</span></div>' +
+      '<div class="row"><span class="label">Will ring you back at</span><span class="val">+1 507 873 1084</span></div>' +
+    '</div>'
+  );
+  setTimeout(() => {
+    addAgentMessage('bot', 'AI is asking: "Hi, this is ' + (onbState.data?.name || 'the assistant') + '\'s AI on a quick call — are you free tomorrow around 2pm to chat?"',
+      '<div class="action-card">' +
+        '<div class="row"><span class="label">Live transcript</span><span class="val" style="font-family: var(--font-mono); font-size: 11px;">AI: Hi, this is an AI assistant…<br>Them: Let me check…</span></div>' +
+        '<div class="row"><span class="label">Status</span><span class="val" style="color: var(--amber);">● Waiting for answer</span></div>' +
+      '</div>'
+    );
+  }, 1500);
+}
+function agentToggleVoice() {
+  settings_v52.voiceMode = !settings_v52.voiceMode;
+  saveSettings_v52();
+  addAgentMessage('bot', settings_v52.voiceMode ? '🎙️ Voice mode enabled. Tap the mic button to speak.' : '🔇 Voice mode disabled. You can still type.');
+}
+
+// Override runAgentIntent to use v52 with new actions
+runAgentIntent = runAgentIntent_v52;
+
+/* ====================================================================
+   v5.2 — SENTIMENT ANALYSIS (for history)
+   ==================================================================== */
+function sentimentScore(text) {
+  const t = (text || '').toLowerCase();
+  const pos = ['great', 'love', 'awesome', 'excellent', 'amazing', 'perfect', 'thanks', 'yes', 'interested', 'happy', 'sounds good', 'great', 'wonderful'];
+  const neg = ['no', 'cancel', 'angry', 'frustrated', 'hate', 'bad', 'terrible', 'wrong', 'problem', 'issue', 'complaint', 'never', 'stop', 'unsubscribe'];
+  let score = 0;
+  pos.forEach(w => { if (t.includes(w)) score++; });
+  neg.forEach(w => { if (t.includes(w)) score--; });
+  return score;
+}
+function sentimentBar(score) {
+  if (score > 0) return '<span class="sentiment-bar"><span class="bar"><div style="width: ' + Math.min(100, score * 25) + '%;"></div></span><span class="sentiment-positive">+' + score + '</span></span>';
+  if (score < 0) return '<span class="sentiment-bar"><span class="bar"><div class="neg" style="width: ' + Math.min(100, Math.abs(score) * 25) + '%;"></div></span><span class="sentiment-negative">' + score + '</span></span>';
+  return '<span class="sentiment-bar"><span class="bar"><div style="width: 4%; background: var(--ink-3);"></div></span><span class="sentiment-neutral">0</span></span>';
+}
+
+// Enhance renderHistory to show sentiment
+const _origRenderHistory = renderHistory;
+renderHistory = function() {
+  _origRenderHistory();
+  // After the original render, add sentiment indicators to rows
+  document.querySelectorAll('#history-table tr').forEach(row => {
+    const cells = row.querySelectorAll('td');
+    if (cells.length < 4) return;
+    // Get the "from" number to check calls cache
+    const from = cells[1]?.textContent || '';
+    // We don't have full text per row, so use a quick heuristic
+    const score = Math.floor(Math.random() * 3) - 1; // demo
+    const ev = cells[3]?.textContent || '';
+    if (ev.includes('hangup') && !ev.includes('answered')) {
+      // missed - show negative
+      if (!row.querySelector('.sentiment-bar')) {
+        const td = document.createElement('td');
+        td.innerHTML = sentimentBar(-1);
+        row.insertBefore(td, cells[4]);
+      }
+    }
+  });
+};
+
+/* ====================================================================
+   v5.2 — BOOT NEW SYSTEMS
+   ==================================================================== */
+// Load sessions, memories, settings on app start
+agentSessions.load();
+agentMemories.load();
+loadSettings_v52();
+
+// Auto-launch onboarding for new users
+function maybeAutoOnboard() {
+  try {
+    if (localStorage.getItem('agentops.onboarded')) return;
+    // Defer to let app render first
+    setTimeout(() => openOnboarding(), 600);
+  } catch (e) {}
+}
+
+// Hook into showApp
+const _origShowApp = showApp;
+showApp = function() {
+  _origShowApp();
+  maybeAutoOnboard();
+};
+
 function showCallBar(opts) {
   const bar = document.getElementById('call-bar');
   if (!bar) return;
@@ -3462,6 +4766,42 @@ function switchTab(name) {
   if (name === 'campaigns' && window.Campaigns) window.Campaigns.activate();
   if (name === 'dashboard') loadDashboard();
   if (name === 'contacts') loadContacts();
+  if (name === 'dialer') { loadContacts(); renderDialerContacts(); }
+}
+
+// Dialer contact picker
+function renderDialerContacts(filter) {
+  const el = document.getElementById('dialer-contacts-list');
+  if (!el) return;
+  const q = (filter || '').toLowerCase().trim();
+  const items = (contactsState.items || []).filter(c => {
+    if (!q) return true;
+    return (c.name || '').toLowerCase().includes(q)
+      || (c.phone || '').includes(q)
+      || (c.email || '').toLowerCase().includes(q)
+      || (c.company || '').toLowerCase().includes(q);
+  });
+  if (!items.length) {
+    el.innerHTML = '<div style="color: var(--ink-3); padding: 12px; text-align: center; font-size: 12px;">' +
+      (q ? 'No contacts match "' + escapeHtml(q) + '"' : '<a href="javascript:switchTab(\'contacts\')" style="color: var(--teal);">Add your first contact →</a>') + '</div>';
+    return;
+  }
+  el.innerHTML = items.slice(0, 8).map(c => {
+    const initial = (c.name || c.phone || '?').charAt(0).toUpperCase();
+    return '<div onclick="dialerCallContact(\'' + escapeAttr(c.phone) + '\')" style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-md); cursor: pointer; transition: background 0.1s;" onmouseover="this.style.background=\'var(--bg-3)\'" onmouseout="this.style.background=\'transparent\'">' +
+      '<div class="contact-avatar" style="width:32px;height:32px;font-size:13px;">' + initial + '</div>' +
+      '<div style="flex: 1; min-width: 0;">' +
+        '<div style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(c.name || c.phone) + '</div>' +
+        '<div class="mono" style="font-size: 11px; color: var(--ink-3);">' + escapeHtml(c.phone) + (c.company ? ' · ' + escapeHtml(c.company) : '') + '</div>' +
+      '</div>' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--teal);"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>' +
+    '</div>';
+  }).join('');
+}
+function filterDialerContacts(q) { renderDialerContacts(q); }
+function dialerCallContact(phone) {
+  document.getElementById('dialer-number-display').textContent = phone;
+  placeCall();
 }
 
 /* ====================================================================
