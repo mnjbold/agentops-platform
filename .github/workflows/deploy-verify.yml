@@ -1,0 +1,81 @@
+name: Deploy Verify
+
+# Runs the PowerShell deploy verification every 15 minutes and on push to main.
+# Posts a Discord alert (DISCORD_DEPLOY_WEBHOOK) only on failure so a clean
+# run is silent. See ops/coolify-deploy-fix.md §9 for webhook setup.
+
+on:
+  schedule:
+    # Every 15 minutes, offset by 7 minutes to avoid hitting the
+    # GitHub Actions cron-aligned minute.
+    - cron: '*/15 7-23 * * *'
+    - cron: '*/15 0-6 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify *.getbijou.xyz deploys
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FRONTEND_HOST: agentops.getbijou.xyz
+      BACKEND_HOST:  bkjr-api.getbijou.xyz
+      TIMEOUT_SEC:   15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell Core
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget apt-transport-https software-properties-common
+          wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq powershell
+          pwsh --version
+
+      - name: Run verify-deploy.ps1
+        id: verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & ./scripts/verify-deploy.ps1 `
+              -FrontendHost $env:FRONTEND_HOST `
+              -BackendHost  $env:BACKEND_HOST  `
+              -TimeoutSec   ([int]$env:TIMEOUT_SEC)
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            "::error::verify-deploy.ps1 exited with $rc"
+            exit $rc
+          }
+
+      - name: Discord alert on failure
+        if: failure()
+        env:
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+          GH_REPO:    ${{ github.repository }}
+          GH_RUN_ID:  ${{ github.run_id }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_MSG:   ${{ github.event.head_commit.message }}
+        shell: bash
+        run: |
+          if [ -z "$DISCORD_DEPLOY_WEBHOOK" ]; then
+            echo "DISCORD_DEPLOY_WEBHOOK not set; skipping alert"
+            exit 0
+          fi
+          payload=$(cat <<EOF
+          {
+            "content": ":rotating_light: **agentops deploy verify FAILED**\nRepo: ${GH_REPO}\nRun: ${GH_RUN_ID}\nURL: ${GH_RUN_URL}\nLast commit: ${HEAD_MSG}\nSee workflow logs for the failing FQDN."
+          }
+          EOF
+          )
+          curl -fsS -H "Content-Type: application/json" \
+               -X POST -d "$payload" "$DISCORD_DEPLOY_WEBHOOK"
