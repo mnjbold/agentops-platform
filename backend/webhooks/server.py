@@ -47,6 +47,17 @@ from webhooks.security import (  # noqa: E402
     is_enabled as hmac_enabled,
     verify_signature,
 )
+from webhooks.tenancy import (  # noqa: E402
+    TenantContext,
+    UserContext,
+    decode_jwt,
+    rate_limit_check,
+    verify_api_key,
+)
+from webhooks.storage import get_store  # noqa: E402
+from webhooks.admin_api import router as admin_router  # noqa: E402
+from webhooks.auth_api import router as auth_router, create_initial_user  # noqa: E402
+from webhooks.voicemail_api import router as voicemail_router  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +107,176 @@ async def close_connection_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["Connection"] = "close"
     return response
+
+
+# ──────────────────────────── auth + rate limit middleware ──────────────────
+# Per request we resolve a TenantContext from:
+#   1) ``X-Api-Key`` (per-tenant) — bcrypt-matched against tenant_secrets.api_key_hash
+#   2) ``Authorization: Bearer <jwt>`` (per-user) — decoded, ``tid`` claim
+#      must match the X-Api-Key tenant OR the X-Tenant-Id header
+#   3) legacy fallback: ``X-Tenant-Id`` header alone (default tenant only)
+#
+# Routes that opt out of JWT auth list themselves in ``_JWT_EXEMPT_PREFIXES``
+# below. Webhook ingestion (signed via WEBHOOK_HMAC_SECRET) is exempt so
+# Telnyx's POSTs still flow during deploys when no JWT is in play.
+# WebSocket upgrades are skipped entirely (handled in the ws_endpoint).
+#
+# Auth + rate-limit live in ONE middleware because Starlette runs
+# middlewares in reverse-add order — splitting them would let the rate
+# limiter see the request *before* auth has populated request.state.
+_JWT_EXEMPT_PREFIXES = (
+    "/api/auth/login",
+    "/api/auth/me",       # 'me' is read by the frontend on app load
+    "/api/health",
+    "/api/docs",
+    "/api/openapi.json",
+    "/docs",
+    "/openapi.json",
+    "/webhooks/telnyx",   # signed separately by WEBHOOK_HMAC_SECRET
+    "/admin/test_event",  # signed separately
+    "/health",
+)
+
+
+def _is_exempt(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in _JWT_EXEMPT_PREFIXES)
+
+
+def _resolve_tenant_id_from_api_key(plaintext_key: str) -> Optional[str]:
+    """Bcrypt-match the plaintext against every tenant's stored hash.
+    Linear scan is fine for v1 (single-digit tenants)."""
+    if not plaintext_key:
+        return None
+    store = get_store()
+    for t in store.list_tenants():
+        h = t.get("api_key_hash")
+        if not h:
+            continue
+        if verify_api_key(plaintext_key, h):
+            return t["id"]
+    return None
+
+
+@app.middleware("http")
+async def auth_and_rate_limit_middleware(request: Request, call_next):
+    """Combined auth + rate-limit. See the docstring above for why these
+    live together."""
+    path = request.url.path
+
+    # WebSocket upgrades are handled by the endpoint itself, not middleware.
+    if request.scope.get("type") == "websocket":
+        return await call_next(request)
+
+    api_key = (
+        request.headers.get("X-Api-Key")
+        or request.headers.get("x-api-key")
+        or ""
+    ).strip()
+    auth = (request.headers.get("Authorization") or "").strip()
+    bearer = ""
+    if auth.lower().startswith("bearer "):
+        bearer = auth.split(" ", 1)[1].strip()
+
+    tenant_id: Optional[str] = None
+    user: Optional[UserContext] = None
+    source = "none"
+
+    if api_key:
+        tenant_id = _resolve_tenant_id_from_api_key(api_key)
+        if not tenant_id:
+            # Don't 401 here for exempt paths — let the endpoint decide.
+            if path.startswith("/api/") and not _is_exempt(path):
+                return _json_error(401, "invalid X-Api-Key")
+        else:
+            source = "api_key"
+
+    if tenant_id is None and not api_key:
+        # Backward-compat: X-Tenant-Id alone defaults to "default" tenant
+        # for callers that haven't migrated to API keys yet.
+        legacy = (request.headers.get("X-Tenant-Id") or request.headers.get("x-tenant-id") or "").strip()
+        if legacy:
+            store = get_store()
+            if store.get_tenant(legacy):
+                tenant_id = legacy
+                source = "header"
+                log.warning(
+                    "DEPRECATED: %s used X-Tenant-Id without X-Api-Key; "
+                    "generate a tenant API key and migrate to X-Api-Key.",
+                    path,
+                )
+        elif path.startswith("/api/") and not _is_exempt(path):
+            # Public health/docs/auth endpoints are exempt. For everything
+            # else, default tenant is allowed without an API key for the
+            # v0.1 single-tenant case (matches the pre-Phase-A behaviour).
+            store = get_store()
+            if store.get_tenant("default"):
+                tenant_id = "default"
+                source = "header"
+
+    # Decode a JWT if present and bind it to the tenant.
+    if bearer:
+        claims = decode_jwt(bearer)
+        if claims is None:
+            if path.startswith("/api/") and not _is_exempt(path):
+                return _json_error(401, "invalid or expired token")
+        else:
+            jwt_tenant = claims.get("tid")
+            jwt_user_id = claims.get("sub")
+            # Tenant binding: the JWT's tid must match the API key's tenant
+            # (or the X-Tenant-Id header) — otherwise 403.
+            if tenant_id and jwt_tenant and tenant_id != jwt_tenant:
+                return _json_error(403, f"token tenant {jwt_tenant} does not match request tenant {tenant_id}")
+            if tenant_id is None and jwt_tenant:
+                tenant_id = jwt_tenant
+                source = source if source != "none" else "jwt"
+            if jwt_user_id and tenant_id:
+                store = get_store()
+                u = store.get_user_by_id(jwt_user_id)
+                if u and u["tenant_id"] == tenant_id:
+                    user = UserContext(
+                        id=u["id"],
+                        email=u["email"],
+                        role=u.get("role") or "admin",
+                        tenant_id=u["tenant_id"],
+                    )
+
+    # Final gate: protected /api/* routes need *some* auth context.
+    if path.startswith("/api/") and not _is_exempt(path):
+        if tenant_id is None:
+            return _json_error(401, "authentication required")
+
+    # Build the context and stash on request.state.
+    ctx = TenantContext(
+        tenant_id=tenant_id or "default",
+        source=source,
+        user=user,
+        raw_api_key=api_key or None,
+    )
+    request.state.tenant_ctx = ctx
+    request.state.tenant_id = ctx.tenant_id  # convenience for endpoints
+
+    # Rate limit (after auth so we have a tenant id). Skip exempt paths
+    # and WebSocket upgrades.
+    if path.startswith("/api/") and not _is_exempt(path):
+        allowed, retry = rate_limit_check(tenant_id or "anon", path)
+        if not allowed:
+            log.warning("Rate limit hit: tenant=%s path=%s retry=%ds", tenant_id, path, retry)
+            from fastapi.responses import JSONResponse
+            resp = JSONResponse(
+                status_code=429,
+                content={"detail": "rate limit exceeded", "retry_after": retry},
+            )
+            resp.headers["Retry-After"] = str(retry)
+            resp.headers["Connection"] = "close"
+            return resp
+
+    return await call_next(request)
+
+
+def _json_error(status: int, detail: str):
+    """Helper to return a JSONResponse from middleware."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=status, content={"detail": detail})
 
 # Process-wide routing map: E.164 → assistant_id
 _routing: dict[str, str] = {}
@@ -199,6 +380,12 @@ app.include_router(dispatch_router)
 # Mount the dashboard REST API
 app.include_router(dashboard_router)
 
+# Mount the Phase A admin (tenants, secrets), auth (JWT login), and
+# voicemail/recording routers.
+app.include_router(admin_router)
+app.include_router(auth_router)
+app.include_router(voicemail_router)
+
 # Load the specialist assistant_id map (so connect_specialist knows what to switch to)
 def load_specialist_mapping(path: Path = _PROJECT_ROOT / "agents" / "specialists" / "assistants.json") -> None:
     if not path.exists():
@@ -215,6 +402,69 @@ def load_specialist_mapping(path: Path = _PROJECT_ROOT / "agents" / "specialists
 
 
 load_specialist_mapping()
+
+# ──────────────────────── Phase A startup migration ────────────────────────
+# On every boot, push legacy .env credentials into the default tenant's
+# secret store. We log a warning so the operator knows to remove them
+# from .env (so the secret store is the only source of truth).
+def _migrate_legacy_env_to_secrets() -> None:
+    try:
+        from webhooks.tenancy import encrypt_secret
+        store = get_store()
+        if not store.get_tenant("default"):
+            return
+        # Mapping: .env key -> secret-store key
+        env_map = {
+            "TELNYX_WEBRTC_USERNAME": "telnyx_webrtc_username",
+            "TELNYX_WEBRTC_PASSWORD": "telnyx_webrtc_password",
+            "TELNYX_WEBRTC_CONNECTION_ID": "telnyx_webrtc_connection_id",
+            "TELNYX_SOFTPHONE_FROM": "telnyx_softphone_from",
+            "TELNYX_SOFTPHONE_CONNECTION_ID": "telnyx_softphone_connection_id",
+        }
+        any_migrated = False
+        for env_key, secret_key in env_map.items():
+            val = os.environ.get(env_key)
+            if not val:
+                continue
+            existing = store.get_secret("default", secret_key)
+            if existing is not None:
+                # Don't overwrite — operator may have rotated manually.
+                continue
+            store.upsert_secret("default", secret_key, encrypt_secret(val))
+            any_migrated = True
+            log.warning(
+                "Migrated %s from .env into default tenant secret store "
+                "(key=%s). Remove it from backend/.env so the secret store "
+                "is the only source of truth.",
+                env_key, secret_key,
+            )
+        if any_migrated:
+            # Seed the admin user on first boot (only if no users exist
+            # for the default tenant yet).
+            if not store.get_user("default", f"admin@default.local"):
+                import secrets as _s
+                pwd = _s.token_urlsafe(18)
+                create_initial_user(
+                    tenant_id="default",
+                    email="admin@default.local",
+                    password=pwd,
+                    role="admin",
+                )
+                log.warning(
+                    "=================================================================\n"
+                    "  DEFAULT TENANT ADMIN (one-time setup):\n"
+                    "    email:    admin@default.local\n"
+                    "    password: %s\n"
+                    "  Use POST /api/auth/login to exchange this for a JWT.\n"
+                    "  This password is NOT recoverable — rotate via /api/admin/tenants/default/rotate-key + /api/auth/reset.\n"
+                    "=================================================================",
+                    pwd,
+                )
+    except Exception as e:
+        log.warning("Legacy env->secret migration failed (non-fatal): %s", e)
+
+
+_migrate_legacy_env_to_secrets()
 
 _handler = DefaultEventHandler(agent_routing=_routing)
 

@@ -29,7 +29,7 @@ jobs:
       - name: Syntax check
         working-directory: backend
         run: |
-          python -m compileall -q webhooks telnyx_mcp scripts appwrite
+          python -m compileall -q webhooks telnyx_mcp scripts appwrite tests
 
       - name: Import smoke test
         working-directory: backend
@@ -39,14 +39,26 @@ jobs:
           APPWRITE_API_KEY: stub
           APPWRITE_PROJECT_ID: stub
           APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
+          TENANT_SECRET_MASTER_KEY: ci-master-key
+          W3J_DISABLE_SCHEDULER: "1"
         run: |
           python -c "
           from webhooks import dashboard_api, server, security, storage
+          from webhooks import tenancy, admin_api, auth_api, voicemail_api, voicemail_handler
           from appwrite.client import get_appwrite, health
           print('imports ok')
           h = health()
           print('appwrite health:', h)
           "
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          TELNYX_API_KEY: stub
+          TENANT_SECRET_MASTER_KEY: ci-master-key
+          W3J_DISABLE_SCHEDULER: "1"
+        run: |
+          python -m pytest tests/ -v --tb=short
 
   frontend-lint:
     name: Frontend · HTML + JS sanity

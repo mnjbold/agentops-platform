@@ -4,6 +4,10 @@
 !.env.example
 *.log
 secrets/
+# Phase A: auto-generated tenant master key (created on first run if
+# TENANT_SECRET_MASTER_KEY is unset). Operator should set the env var
+# instead for portable deployments.
+.tenant_master_key
 
 # Appwrite credentials (real secret-bearing JSON, see settings.example.json)
 **/settings.json

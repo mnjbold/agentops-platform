@@ -1,5 +1,6 @@
 # agentops backend — Python dependencies
 # Freeze: 2026-08-29 from W3J-BIJOU PROJECT venv
+# Phase A backend (2026-08-31): added bcrypt, pytest
 
 # web framework
 fastapi==0.141.1
@@ -21,6 +22,7 @@ python-dotenv==1.2.2
 # crypto / auth
 PyJWT==2.13.0
 cryptography==50.0.0
+bcrypt==5.0.0   # API-key hashing (Phase A #2)
 
 # CLI helpers
 click==8.4.2
@@ -32,3 +34,7 @@ telnyx==4.170.0
 # Appwrite (BaaS for auth/DB/realtime). Used by backend/appx/.
 # Match the Appwrite server version: server 1.7.x ↔ SDK 14.x.
 appwrite==14.1.0
+
+# tests
+pytest==9.1.1   # Phase A #2-#9 test suite
+

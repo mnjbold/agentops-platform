@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
 import sys
 import threading
@@ -52,13 +53,20 @@ if _APPX_PARENT.exists() and str(_APPX_PARENT) not in sys.path:
 
 
 def _resolve_tenant(request: Optional[Request] = None) -> str:
-    """Resolve the tenant id from the ``X-Tenant-Id`` header, defaulting
-    to ``"default"`` for the single-tenant MVP. Mirrors the later
-    ``_tenant_id(request)`` helper but is available before the contacts
-    section (which imports ``webhooks.storage``).
+    """Resolve the tenant id.
+
+    Priority:
+    1. ``request.state.tenant_id`` — set by the Phase A auth middleware
+       after validating an X-Api-Key or JWT.
+    2. ``X-Tenant-Id`` header — legacy single-tenant header (still works
+       for back-compat; the middleware logs a deprecation warning).
+    3. ``"default"`` — fallback for tests / single-tenant MVP.
     """
     if request is None:
         return "default"
+    tid = getattr(request.state, "tenant_id", None)
+    if tid:
+        return tid
     tid = request.headers.get("X-Tenant-Id") or request.headers.get("x-tenant-id")
     return (tid or "default").strip() or "default"
 
@@ -388,8 +396,14 @@ def _shape_appwrite_call_for_ui(doc: dict) -> dict:
     }
 
 
-@router.get("/recordings")
+@router.get("/recordings/telnyx")
 def recent_recordings(limit: int = 10) -> dict:
+    """Live Telnyx recordings (last 7 days, newest first). The Phase A
+    FTS5 search lives at ``/api/recordings`` (see ``voicemail_api.py``);
+    this endpoint is kept under ``/api/recordings/telnyx`` so dashboards
+    that want the live Telnyx view can still get it without colliding
+    with the local search.
+    """
     c = get_client()
     try:
         start = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -1287,13 +1301,17 @@ from webhooks.storage import (  # noqa: E402
 
 # ──────────────────────── tenant helper ────────────────────────────────────
 def _tenant_id(request: Request) -> str:
-    """Read ``X-Tenant-Id`` from the request, default to ``"default"``.
+    """Resolve the current tenant id for the request.
 
-    v0.1: no auth — the header is purely a scoping key. Anyone can pick
-    any tenant id; that is acceptable because the deployment is
-    single-process and the data is operator-owned. v0.2 will tie tenant
-    id to the session token returned by ``/api/login``.
+    v0.1 read ``X-Tenant-Id`` directly. v1 (Phase A) prefers the
+    ``request.state.tenant_id`` set by the auth middleware (which has
+    already validated the X-Api-Key or JWT). Falls back to the header
+    for callers that haven't migrated yet, and finally to ``"default"``
+    for the single-tenant MVP.
     """
+    tid = getattr(request.state, "tenant_id", None)
+    if tid:
+        return tid
     tid = request.headers.get("X-Tenant-Id") or request.headers.get("x-tenant-id")
     return (tid or "default").strip() or "default"
 
@@ -2025,5 +2043,10 @@ def start_scheduler_once() -> None:
 # its lifespan, so any process that imports ``dashboard_api`` (server.py,
 # a unit test, etc.) gets a scheduler thread. ``start_scheduler_once``
 # is idempotent, so test reimports are safe.
-start_scheduler_once()
+#
+# Set ``W3J_DISABLE_SCHEDULER=1`` to skip the auto-start (used by the
+# pytest suite so the daemon thread doesn't keep the test process alive
+# after the test client returns).
+if os.environ.get("W3J_DISABLE_SCHEDULER", "").strip() != "1":
+    start_scheduler_once()
 

@@ -301,7 +301,18 @@ class DefaultEventHandler(BaseEventHandler):
     def event_recording_ready(self, ctx: WebhookContext) -> str:
         rec_id = ctx.payload.get("recording_id") or ctx.payload.get("id")
         self._log_event(ctx, notes=f"recording:{rec_id}")
+        # Phase A: also persist + transcribe via the dedicated handler.
+        try:
+            from webhooks.voicemail_handler import handle_recording_saved
+            handle_recording_saved(ctx.event_type or "recording.ready", ctx.payload)
+        except Exception as e:
+            log.warning("voicemail_handler.handle_recording_saved failed (non-fatal): %s", e)
         return f"recording:{rec_id}"
+
+    def event_recording_saved(self, ctx: WebhookContext) -> str:
+        # Telnyx renamed the event from recording.ready to recording.saved
+        # at some point — both call the same pipeline.
+        return self.event_recording_ready(ctx)
 
     def event_message_received(self, ctx: WebhookContext) -> str:
         from_ = _extract_phone(ctx.payload.get("from"))
