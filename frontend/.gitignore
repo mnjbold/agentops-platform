@@ -1,0 +1,25 @@
+# Build output
+dist/
+node_modules/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Vite
+.vite/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Screenshot tooling
+.chrome-profile/

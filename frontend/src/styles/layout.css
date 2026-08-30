@@ -1,0 +1,80 @@
+/* =====================================================================
+ * agentops/layout.css
+ * App shell + page primitives.
+ * ===================================================================== */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: var(--topbar-height) 1fr;
+  grid-template-areas: "side top" "side main";
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--color-bg-0);
+}
+.app-sidebar { grid-area: side; }
+.app-topbar  { grid-area: top; }
+.app-main    { grid-area: main; padding: var(--space-5); overflow-y: auto; min-width: 0; }
+
+.app-topbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-5);
+  background: var(--color-bg-1);
+  border-bottom: 1px solid var(--color-line);
+  z-index: var(--z-sticky);
+}
+.topbar-title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--color-fg-0); }
+.topbar-spacer { flex: 1; }
+.topbar-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+.page-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.page-title { font-size: var(--text-2xl); font-weight: var(--weight-bold); color: var(--color-fg-0); margin: 0; }
+.page-sub { font-size: var(--text-sm); color: var(--color-fg-3); margin: 4px 0 0; }
+.page-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+.card {
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-line);
+}
+.card-head h3 { margin: 0; font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--color-fg-0); }
+.card-body { padding: var(--space-5); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
+@media (max-width: 900px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+}
+
+/* === Login screen ============================================== */
+.login-shell {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-4);
+}
+.login-card {
+  width: 100%; max-width: 420px;
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-7);
+}
+.login-logo { width: 48px; height: 48px; border-radius: var(--radius-lg); background: var(--grad-brand); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: var(--weight-bold); font-size: 24px; margin-bottom: var(--space-4); }
+.login-title { font-size: var(--text-2xl); font-weight: var(--weight-bold); color: var(--color-fg-0); margin: 0 0 var(--space-1); }
+.login-sub { font-size: var(--text-sm); color: var(--color-fg-3); margin: 0 0 var(--space-5); }
+.login-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.login-error { background: var(--color-danger-soft); color: var(--color-danger); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); font-size: var(--text-sm); }
+.login-foot { margin-top: var(--space-4); text-align: center; font-size: var(--text-sm); color: var(--color-fg-3); }
