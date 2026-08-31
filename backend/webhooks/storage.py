@@ -442,6 +442,45 @@ CREATE TABLE IF NOT EXISTS audit_log_archive (
     archived_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_arch_tenant_ts ON audit_log_archive(tenant_id, timestamp);
+
+-- ────────────── Phase C compliance + mass test (issues #24, #25) ──────────────
+-- The other Phase C worker owns #22/23 (WhatsApp + SMS blast). This block
+-- adds (a) the synthetic-call log used by the test-mode simulator and
+-- (b) the DNC cache table used by the compliance pre-flight.
+
+-- #24 — synthetic_calls: one row per simulated call leg. ``outcome`` is
+-- free-form (matches the campaign mode's outcome vocabulary), and
+-- ``tool_calls_json`` holds the assistant's tool-call log when the
+-- campaign mode is ai/voicemail_drop.
+CREATE TABLE IF NOT EXISTS synthetic_calls (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    campaign_id     TEXT NOT NULL,
+    contact_id      TEXT,
+    outcome         TEXT NOT NULL,
+    started_at      TEXT NOT NULL,
+    ended_at        TEXT,
+    transcript      TEXT,
+    tool_calls_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_synthetic_calls_tenant ON synthetic_calls(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_synthetic_calls_campaign ON synthetic_calls(tenant_id, campaign_id);
+
+-- #25 — dnc_cache: the per-phone, per-source deny-list. Composite PK so
+-- a phone can have one row per source (e.g. us_dnc, ca_dnc, internal).
+-- ``expires_at`` is what :func:`compliance.dnc._cache_valid` checks.
+CREATE TABLE IF NOT EXISTS dnc_cache (
+    id          TEXT PRIMARY KEY,
+    phone       TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    is_dnc      INTEGER NOT NULL DEFAULT 0,
+    checked_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    UNIQUE (phone, source)
+);
+CREATE INDEX IF NOT EXISTS idx_dnc_cache_phone ON dnc_cache(phone);
+CREATE INDEX IF NOT EXISTS idx_dnc_cache_expires ON dnc_cache(expires_at);
 """
 
 
@@ -486,6 +525,7 @@ class Store:
             self._conn.executescript(_SCHEMA)
             self._run_migrations()
             self._run_migrations_phase_b()
+            self._run_migrations_phase_c()
             cur = self._conn.execute(
                 "SELECT id FROM tenants WHERE id = 'default'"
             )
@@ -567,6 +607,46 @@ class Store:
                 "ALTER TABLE campaigns ADD COLUMN ring_timeout_secs INTEGER NOT NULL DEFAULT 25"
             )
             log.info("Migrated campaigns.ring_timeout_secs")
+
+    def _run_migrations_phase_c(self) -> None:
+        """Phase C (issues #24, #25) migrations.
+
+        - ``campaigns.test_mode`` (0/1) — when set, the dialer walks the
+          workflow synthetically rather than hitting Telnyx.
+        - ``campaigns.dnc_check_enabled`` (0/1) — default on.
+        - ``campaigns.time_window_enabled`` (0/1) — default on.
+        - ``campaigns.time_window_start`` / ``campaigns.time_window_end``
+          — local-time bounds (default 8 → 21, matching the TCPA).
+
+        Each ALTER is guarded with a PRAGMA check so the migration is
+        idempotent across restarts and across pre-Phase-C databases.
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(campaigns)").fetchall()}
+        if "test_mode" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("Migrated campaigns.test_mode")
+        if "dnc_check_enabled" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN dnc_check_enabled INTEGER NOT NULL DEFAULT 1"
+            )
+            log.info("Migrated campaigns.dnc_check_enabled")
+        if "time_window_enabled" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN time_window_enabled INTEGER NOT NULL DEFAULT 1"
+            )
+            log.info("Migrated campaigns.time_window_enabled")
+        if "time_window_start" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN time_window_start INTEGER NOT NULL DEFAULT 8"
+            )
+            log.info("Migrated campaigns.time_window_start")
+        if "time_window_end" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN time_window_end INTEGER NOT NULL DEFAULT 21"
+            )
+            log.info("Migrated campaigns.time_window_end")
 
     def close(self) -> None:
         with self._lock:
@@ -1072,7 +1152,10 @@ class Store:
         if not existing:
             return None
         allowed = {"name", "from_number", "message", "contact_ids",
-                   "schedule_at", "status"}
+                   "schedule_at", "status",
+                   # Phase C — compliance + test-mode flags (#24, #25)
+                   "test_mode", "dnc_check_enabled", "time_window_enabled",
+                   "time_window_start", "time_window_end"}
         sets: list[str] = []
         vals: list[Any] = []
         for k, v in fields.items():
@@ -1333,6 +1416,107 @@ class Store:
             (tenant_id, f"%{marker}%"),
         )
         return rows
+
+    # ──────────────── Phase C — synthetic_calls + dnc_cache (#24, #25) ────────────
+
+    def insert_synthetic_call(
+        self,
+        tenant_id: str,
+        campaign_id: str,
+        outcome: str,
+        *,
+        contact_id: Optional[str] = None,
+        started_at: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        transcript: Optional[str] = None,
+        tool_calls: Optional[list[dict]] = None,
+    ) -> dict:
+        """Insert one row in ``synthetic_calls``. Returns the inserted row.
+
+        ``started_at``/``ended_at`` default to ``now`` and ``now + 1s``
+        respectively (the simulator doesn't care about real durations).
+        """
+        sid = _new_id("syn")
+        started = started_at or _utcnow()
+        ended = ended_at or _utcnow()
+        if not isinstance(started, str):
+            started = started.isoformat()
+        if not isinstance(ended, str):
+            ended = ended.isoformat()
+        tool_calls_json = json.dumps(tool_calls or [])
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO synthetic_calls("
+                "id, tenant_id, campaign_id, contact_id, outcome, "
+                "started_at, ended_at, transcript, tool_calls_json"
+                ") VALUES (?,?,?,?,?,?,?,?,?)",
+                (sid, tenant_id, campaign_id, contact_id, outcome,
+                 started, ended, transcript, tool_calls_json),
+            )
+        return self.get_synthetic_call(tenant_id, sid)  # type: ignore[return-value]
+
+    def get_synthetic_call(self, tenant_id: str, call_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM synthetic_calls "
+            "WHERE tenant_id = ? AND id = ?",
+            (tenant_id, call_id),
+        )
+        if not row:
+            return None
+        try:
+            row["tool_calls"] = json.loads(row.get("tool_calls_json") or "[]")
+        except json.JSONDecodeError:
+            row["tool_calls"] = []
+        return row
+
+    def list_synthetic_calls(
+        self,
+        tenant_id: str,
+        campaign_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """List synthetic calls, newest first. ``tool_calls_json`` is
+        decoded into a ``tool_calls`` list for callers."""
+        if campaign_id:
+            rows = self._rows(
+                "SELECT * FROM synthetic_calls "
+                "WHERE tenant_id = ? AND campaign_id = ? "
+                "ORDER BY started_at DESC LIMIT ?",
+                (tenant_id, campaign_id, int(limit)),
+            )
+        else:
+            rows = self._rows(
+                "SELECT * FROM synthetic_calls WHERE tenant_id = ? "
+                "ORDER BY started_at DESC LIMIT ?",
+                (tenant_id, int(limit)),
+            )
+        for r in rows:
+            try:
+                r["tool_calls"] = json.loads(r.get("tool_calls_json") or "[]")
+            except json.JSONDecodeError:
+                r["tool_calls"] = []
+        return rows
+
+    def synthetic_call_outcome_summary(
+        self, tenant_id: str, campaign_id: str
+    ) -> dict[str, int]:
+        """Return ``{outcome: count}`` for one campaign's synthetic calls."""
+        rows = self._rows(
+            "SELECT outcome, COUNT(*) AS c FROM synthetic_calls "
+            "WHERE tenant_id = ? AND campaign_id = ? "
+            "GROUP BY outcome",
+            (tenant_id, campaign_id),
+        )
+        return {r["outcome"]: int(r["c"] or 0) for r in rows}
+
+    def dnc_lookup(self, phone: str, source: str = "us_dnc") -> Optional[dict]:
+        """Read-only cache row lookup. Returns ``None`` on miss. The
+        ``compliance.dnc`` module owns the upsert; this is the read
+        side so the API layer can render ``last_checked_at``."""
+        return self._row(
+            "SELECT * FROM dnc_cache WHERE phone = ? AND source = ?",
+            (phone, source),
+        )
 
     # ──────────────── Phase B (issues #13, #14, #15, #17, #18) ────────────────
     # ─────────────────────────── workflows (#13) ─────────────────────────────

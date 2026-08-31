@@ -26,6 +26,7 @@ import { mountAnalyticsScreen }   from './screens/analytics.js';
 import { mountBillingScreen }     from './screens/billing.js';
 import { mountAuditScreen }       from './screens/audit.js';
 import { mountStubScreen }        from './screens/stub.js';
+import { mountCampaignsScreen }   from './screens/campaigns.js';
 import { mountWorkflowsScreen }   from './screens/workflows.js';
 import { mountAssistantsScreen }  from './screens/assistants.js';
 import { mountVoiceLabScreen }    from './screens/voice-lab.js';
@@ -161,7 +162,7 @@ const routes = {
   '/messages':     () => mountStubScreen(main, { title: 'Messages', sub: 'SMS & WhatsApp threads', legacyTab: 'inbox' }),
   '/voicemail':    () => mountVoicemailScreen(main),
   '/recordings':   () => mountRecordingsScreen(main),
-  '/campaigns':    () => mountStubScreen(main, { title: 'Campaigns', sub: 'Outbound campaigns with AI', legacyTab: 'campaigns' }),
+  '/campaigns':    () => mountCampaignsScreen(main),
   '/power-dialer': () => mountPowerDialerScreen(main),
   '/contacts':     () => mountStubScreen(main, { title: 'Contacts', sub: 'Your address book', legacyTab: 'contacts' }),
   '/tenants':      () => mountTenantsScreen(main),
