@@ -32,6 +32,7 @@ import { mountAssistantsScreen }  from './screens/assistants.js';
 import { mountVoiceLabScreen }    from './screens/voice-lab.js';
 import { mountAgentTestScreen }   from './screens/agent-test.js';
 import { mountNumbersScreen }     from './screens/numbers.js';
+import { mountAgentDashboard }    from './screens/agent_dashboard.js';
 
 const themeStore = persistedStore('agentops.theme', { theme: 'dark' });
 
@@ -79,7 +80,7 @@ function buildSidebar() {
       items: [
         { id: 'tenants',  href: '#/tenants',  label: 'Tenants',  icon: '⌘' },
         { id: 'settings', href: '#/settings', label: 'Settings', icon: '⚙' },
-        { id: 'agents',   href: '#/agents',   label: 'Agents',   icon: '✦' },
+        { id: 'agents',   href: '#/agents',   label: 'Agent',    icon: '✦' },
         { id: 'assistants', href: '#/assistants', label: 'AI Assistants', icon: '✦' },
         { id: 'voice-lab',  href: '#/voice-lab',  label: 'Voice Lab',    icon: '♪' },
         { id: 'analytics',  href: '#/analytics',  label: 'Analytics',  icon: '∑' },
@@ -167,7 +168,7 @@ const routes = {
   '/contacts':     () => mountStubScreen(main, { title: 'Contacts', sub: 'Your address book', legacyTab: 'contacts' }),
   '/tenants':      () => mountTenantsScreen(main),
   '/settings':     () => mountStubScreen(main, { title: 'Settings', sub: 'Theme, account, integrations', legacyTab: 'admin' }),
-  '/agents':       () => mountStubScreen(main, { title: 'Agents', sub: 'AI agent fleet', legacyTab: 'agents' }),
+  '/agents':       () => mountAgentDashboard(main),
   '/workflows':    () => mountWorkflowsScreen(main),
   '/assistants':   () => mountAssistantsScreen(main),
   '/voice-lab':    () => mountVoiceLabScreen(main),

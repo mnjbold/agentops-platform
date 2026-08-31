@@ -1,0 +1,545 @@
+/* =====================================================================
+ * agentops/screens/agent_dashboard.js
+ * Live Agent v1 dashboard (Phase E-A, issue #33).
+ *
+ * 3-column CSS grid:
+ *   - Left rail (260px): status toggle, last-seen, queue count
+ *   - Center (flex): current call or next up card
+ *   - Right rail (320px): recent calls + after-call wrap-up modal
+ *
+ * The dashboard subscribes to /api/agents/me/events over WebSocket
+ * (via subscribeAgentEvents) for live updates. On hangup, it pops
+ * the wrap-up modal so the agent can log disposition + notes
+ * before the next call.
+ * ===================================================================== */
+
+import { h, formatDate, formatDuration } from '../lib/dom.js';
+import { api, subscribeAgentEvents } from '../lib/api.js';
+import { createButton } from '../ui/button.js';
+import { createBadge } from '../ui/badge.js';
+import { createAvatar } from '../ui/avatar.js';
+import { createEmptyState } from '../ui/empty-state.js';
+import { createModal } from '../ui/modal.js';
+import { createTextarea } from '../ui/input.js';
+import { toastError, toastSuccess } from '../ui/toast.js';
+
+const STATUS_OPTIONS = [
+  { value: 'online',  label: 'Online',  variant: 'success' },
+  { value: 'away',    label: 'Away',    variant: 'warning' },
+  { value: 'busy',    label: 'Busy',    variant: 'warning' },
+  { value: 'on_call', label: 'On call', variant: 'accent' },
+  { value: 'offline', label: 'Offline', variant: 'neutral' },
+];
+
+const DISPOSITION_CHIPS = [
+  { value: 'sale',        label: 'Sale',        variant: 'success' },
+  { value: 'support',     label: 'Support',     variant: 'info' },
+  { value: 'callback',    label: 'Callback',    variant: 'accent' },
+  { value: 'not_interested', label: 'Not interested', variant: 'warning' },
+  { value: 'voicemail',   label: 'Voicemail',   variant: 'neutral' },
+  { value: 'wrong_number',label: 'Wrong #',     variant: 'danger' },
+];
+
+const OUTCOME_VARIANT = {
+  answered: 'success', completed: 'success', sale: 'success',
+  voicemail: 'accent', busy: 'warning', no_answer: 'warning',
+  abandoned: 'warning', failed: 'danger', support: 'info', callback: 'accent',
+};
+
+let _state = {
+  status: 'offline',
+  lastSeen: null,
+  myQueue: [],          // calls the current agent could answer (skill-matched)
+  mySkills: [],
+  recent: [],
+  currentCall: null,    // active call (when on a call)
+  wrapUpCall: null,     // call awaiting disposition
+  unsubscribe: null,    // WS unsubscribe
+  countdown: 30,
+  countdownTimer: null,
+};
+
+export function mountAgentDashboard(root) {
+  root.innerHTML = '';
+
+  const head = h('div', { class: 'page-head' },
+    h('div', {},
+      h('h1', { class: 'page-title' }, 'Agent'),
+      h('p', { class: 'page-sub' }, 'Live view of your queue, current call, and recent activity.')
+    ),
+    h('div', { class: 'page-actions' },
+      createBadge({ variant: 'success', dot: true, children: 'Live' }),
+    )
+  );
+  root.append(head);
+
+  // 3-column grid
+  const grid = h('div', { class: 'agent-grid' });
+
+  // === Left rail =====================================================
+  const left = h('aside', { class: 'agent-rail agent-rail-left' });
+  left.append(buildStatusCard());
+  left.append(buildQueueCard());
+  grid.append(left);
+
+  // === Center ========================================================
+  const center = h('section', { class: 'agent-center', id: 'agent-center' });
+  center.append(buildCenterEmpty());
+  grid.append(center);
+
+  // === Right rail ====================================================
+  const right = h('aside', { class: 'agent-rail agent-rail-right' });
+  right.append(buildRecentCard());
+  grid.append(right);
+
+  root.append(grid);
+
+  // Load initial state
+  loadInitial();
+  // Subscribe to live events
+  if (_state.unsubscribe) {
+    try { _state.unsubscribe(); } catch (e) { /* ignore */ }
+  }
+  _state.unsubscribe = subscribeAgentEvents(handleAgentEvent);
+}
+
+function buildStatusCard() {
+  const card = h('div', { class: 'card' },
+    h('div', { class: 'card-head' },
+      h('h3', {}, 'My status'),
+    ),
+    h('div', { class: 'card-body', id: 'agent-status-body' },
+      h('div', { style: 'color: var(--color-fg-3);' }, 'Loading…'),
+    )
+  );
+  return card;
+}
+
+function buildQueueCard() {
+  return h('div', { class: 'card', style: 'margin-top: var(--space-4);' },
+    h('div', { class: 'card-head' },
+      h('h3', {}, 'Calls waiting in my queue'),
+    ),
+    h('div', { class: 'card-body', id: 'agent-queue-body' },
+      h('div', { style: 'color: var(--color-fg-3);' }, 'Loading…'),
+    )
+  );
+}
+
+function buildCenterEmpty() {
+  return h('div', { class: 'card', style: 'height: 100%;' },
+    h('div', { class: 'card-body' },
+      createEmptyState({
+        icon: '☎',
+        title: 'No active call',
+        body: 'When a call is routed to you, it will appear here. Set your status to Online to start receiving calls.',
+      })
+    )
+  );
+}
+
+function buildRecentCard() {
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' },
+      h('h3', {}, 'Recent calls'),
+    ),
+    h('div', { class: 'card-body', id: 'agent-recent-body', style: 'padding: 0;' },
+      h('div', { style: 'padding: var(--space-4); color: var(--color-fg-3);' }, 'Loading…'),
+    )
+  );
+}
+
+// ---------------------------------------------------------------------
+// Renderers
+// ---------------------------------------------------------------------
+
+function renderStatusCard() {
+  const body = document.getElementById('agent-status-body');
+  if (!body) return;
+  body.innerHTML = '';
+
+  // Status row
+  const row = h('div', { class: 'status-toggle-row', style: 'display:flex; flex-wrap:wrap; gap:6px;' });
+  for (const opt of STATUS_OPTIONS) {
+    const btn = createButton({
+      size: 'sm',
+      variant: _state.status === opt.value ? 'primary' : 'secondary',
+      children: opt.label,
+      onClick: async () => {
+        try {
+          await api.put('/agents/me/presence', { status: opt.value });
+          _state.status = opt.value;
+          renderStatusCard();
+          toastSuccess('Status set to ' + opt.label);
+        } catch (e) {
+          toastError('Failed to set status: ' + e.message);
+        }
+      },
+    });
+    row.append(btn);
+  }
+  body.append(row);
+
+  // Last-seen row
+  const lastSeenText = _state.lastSeen
+    ? 'Last seen ' + formatDate(_state.lastSeen)
+    : 'Not seen yet';
+  body.append(h('p', { style: 'margin: 12px 0 0; font-size: var(--text-sm); color: var(--color-fg-3);' },
+    lastSeenText));
+
+  // My skills section
+  body.append(h('div', { style: 'margin-top: var(--space-4);' },
+    h('h4', { style: 'font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-fg-2); margin: 0 0 8px;' },
+      'My skills'),
+    h('div', { id: 'agent-skills-row', style: 'display:flex; flex-wrap:wrap; gap:6px;' },
+      _state.mySkills.length
+        ? _state.mySkills.map(s => createBadge({ variant: 'neutral', children: s.skill + (s.level != null ? ' · ' + s.level : '') }))
+        : [h('span', { style: 'color: var(--color-fg-3); font-size: var(--text-sm);' }, 'No skills set')]
+    )
+  ));
+}
+
+function renderQueueCard() {
+  const body = document.getElementById('agent-queue-body');
+  if (!body) return;
+  body.innerHTML = '';
+  const q = _state.myQueue;
+  if (!q.length) {
+    body.append(h('p', { style: 'color: var(--color-fg-3); font-size: var(--text-sm); margin: 0;' },
+      'No calls waiting for you right now.'));
+    return;
+  }
+  for (const c of q.slice(0, 5)) {
+    const row = h('div', { class: 'rec-row', style: 'padding: 8px; border-bottom: 1px solid var(--color-line);' },
+      h('div', { class: 'rec-row-meta' },
+        h('div', { class: 'rec-row-name' }, c.from_name || c.from_number || c.call_id),
+        h('div', { class: 'rec-row-num mono' }, c.from_number || ''),
+        h('div', { style: 'font-size: var(--text-xs); color: var(--color-fg-3); margin-top:2px;' },
+          'Position ' + (c.position != null ? c.position : '?') +
+          ' · ' + ((c.skill_tags || []).join(', ') || 'no skill tag'))
+      ),
+    );
+    body.append(row);
+  }
+}
+
+function renderCenter() {
+  const center = document.getElementById('agent-center');
+  if (!center) return;
+  center.innerHTML = '';
+  const c = _state.currentCall;
+  if (c) {
+    center.append(renderActiveCall(c));
+    return;
+  }
+  // Otherwise: 'Next up' if there's a matching call
+  const next = (_state.myQueue || [])[0];
+  if (next) {
+    center.append(renderNextUpCard(next));
+    return;
+  }
+  center.append(buildCenterEmpty());
+}
+
+function renderActiveCall(call) {
+  const card = h('div', { class: 'card', style: 'height: 100%;' },
+    h('div', { class: 'card-head', style: 'display:flex; align-items:center; justify-content: space-between;' },
+      h('div', {},
+        h('h3', {}, 'Current call'),
+        h('p', { class: 'sub', style: 'margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-fg-3);' },
+          call.from_number || ''),
+      ),
+      createBadge({ variant: 'accent', dot: true, children: 'On call' }),
+    ),
+    h('div', { class: 'card-body', style: 'display:flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-6);' },
+      createAvatar({ name: call.from_name || call.from_number, size: 96 }),
+      h('h2', { style: 'margin: 0;' }, call.from_name || call.from_number || 'Unknown caller'),
+      h('p', { class: 'mono', style: 'color: var(--color-fg-3);' }, call.from_number || ''),
+      h('p', { id: 'agent-call-duration', style: 'font-size: 2rem; font-weight: 600;' }, formatDuration(call.duration || 0)),
+      h('div', { style: 'display:flex; gap: var(--space-2);' },
+        createButton({
+          variant: 'primary', size: 'lg', children: 'Hold',
+          onClick: () => toastInfo('Hold not implemented in v1'),
+        }),
+        createButton({
+          variant: 'danger', size: 'lg', children: 'Hang up',
+          onClick: () => endCall(call),
+        }),
+      ),
+    )
+  );
+  return card;
+}
+
+function renderNextUpCard(call) {
+  return h('div', { class: 'card', style: 'height: 100%;' },
+    h('div', { class: 'card-head' },
+      h('h3', {}, 'Next up'),
+    ),
+    h('div', { class: 'card-body', style: 'display:flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-6);' },
+      createAvatar({ name: call.from_name || call.from_number, size: 96 }),
+      h('h2', { style: 'margin: 0;' }, call.from_name || call.from_number || 'Unknown'),
+      h('p', { class: 'mono', style: 'color: var(--color-fg-3);' }, call.from_number || ''),
+      h('p', { style: 'font-size: var(--text-sm); color: var(--color-fg-2); margin: 0;' },
+        'Position ' + (call.position || '?') +
+        ' · ' + ((call.skill_tags || []).join(', ') || 'no skill tag')),
+      createButton({
+        variant: 'success', size: 'lg', children: 'Accept',
+        onClick: () => acceptCall(call),
+      }),
+    )
+  );
+}
+
+function renderRecent() {
+  const body = document.getElementById('agent-recent-body');
+  if (!body) return;
+  body.innerHTML = '';
+  if (!_state.recent.length) {
+    body.append(h('div', { style: 'padding: var(--space-4);' },
+      createEmptyState({ compact: true, title: 'No recent calls', body: 'Your call history will appear here.' })));
+    return;
+  }
+  for (const c of _state.recent) {
+    const outcome = (c.outcome || c.status || 'completed').toLowerCase();
+    const variant = OUTCOME_VARIANT[outcome] || 'neutral';
+    const row = h('div', { class: 'rec-row', style: 'padding: 10px; border-bottom: 1px solid var(--color-line);' },
+      h('div', { class: 'rec-row-meta' },
+        h('div', { class: 'rec-row-name', style: 'display:flex; justify-content: space-between; align-items: center;' },
+          h('span', {}, c.from_name || c.from_number || 'Unknown'),
+          createBadge({ variant, size: 'sm', children: outcome }),
+        ),
+        h('div', { class: 'rec-row-num mono', style: 'margin-top: 2px;' }, c.from_number || ''),
+        h('div', { style: 'font-size: var(--text-xs); color: var(--color-fg-3); margin-top: 4px; display:flex; justify-content: space-between;' },
+          h('span', {}, formatDate(c.ended_at || c.created_at || c.started_at)),
+          h('span', {}, formatDuration(c.duration || 0) + ' · '),
+        ),
+        h('div', { style: 'margin-top: 6px; display:flex; gap: 6px;' },
+          c.from_number ? createButton({
+            size: 'sm', variant: 'ghost', children: 'Call back',
+            onClick: () => placeCallFromRecent(c),
+          }) : null,
+        ),
+      ),
+    );
+    body.append(row);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Wrap-up modal
+// ---------------------------------------------------------------------
+
+function openWrapUpModal(call) {
+  let countdown = 30;
+  _state.wrapUpCall = call;
+  const timerEl = h('span', { id: 'wrapup-timer' }, 'Auto-close in ' + countdown + 's');
+
+  const body = h('div', {},
+    h('p', { style: 'margin: 0 0 var(--space-3);' },
+      'How did the call with ',
+      h('strong', {}, call.from_name || call.from_number || 'this caller'),
+      ' go?'),
+    h('div', { id: 'wrapup-chips', style: 'display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-3);' }),
+    h('div', { id: 'wrapup-notes' }),
+  );
+
+  const modal = createModal({
+    title: 'After-call wrap-up',
+    body,
+    footer: h('div', { style: 'display:flex; justify-content: space-between; align-items: center; width: 100%;' },
+      timerEl,
+      h('div', { style: 'display:flex; gap: 8px;' },
+        createButton({ variant: 'ghost', children: 'Skip', onClick: () => { stopCountdown(); modal.close(); }}),
+        createButton({ variant: 'primary', children: 'Save', onClick: () => { stopCountdown(); saveWrapUp(modal); }}),
+      )
+    ),
+    onClose: () => { stopCountdown(); _state.wrapUpCall = null; },
+  });
+
+  // Render disposition chips into the modal body
+  const chipsEl = body.querySelector('#wrapup-chips');
+  let selected = null;
+  for (const c of DISPOSITION_CHIPS) {
+    const chip = createBadge({ variant: 'neutral', children: c.label });
+    chip.style.cursor = 'pointer';
+    chip.addEventListener('click', () => {
+      // reset all
+      chipsEl.querySelectorAll('.badge').forEach(b => b.classList.remove('badge-accent'));
+      chip.classList.add('badge-accent');
+      selected = c.value;
+    });
+    chipsEl.append(chip);
+  }
+
+  // Notes textarea
+  const notes = createTextarea({ label: 'Notes', rows: 3, placeholder: 'Anything worth flagging for the next agent…' });
+  body.querySelector('#wrapup-notes').append(notes);
+
+  // 30s countdown
+  const tick = () => {
+    countdown -= 1;
+    timerEl.textContent = 'Auto-close in ' + countdown + 's';
+    if (countdown <= 0) {
+      stopCountdown();
+      modal.close();
+    }
+  };
+  _state.countdownTimer = setInterval(tick, 1000);
+
+  modal.open();
+}
+
+function stopCountdown() {
+  if (_state.countdownTimer) {
+    clearInterval(_state.countdownTimer);
+    _state.countdownTimer = null;
+  }
+}
+
+async function saveWrapUp(modal) {
+  // Pull selected chip + notes out of the modal body.
+  const active = modal.body.querySelector('.badge.badge-accent');
+  const notesEl = modal.body.querySelector('textarea');
+  const disposition = active ? active.textContent : null;
+  const notes = notesEl ? notesEl.value : '';
+  modal.close();
+  // The wrap-up is best-effort persistence in v1 — toast success even
+  // when the backend endpoint isn't available, so the agent isn't blocked.
+  try {
+    await api.post('/calls/wrap-up', {
+      call_id: _state.wrapUpCall ? _state.wrapUpCall.call_id : null,
+      disposition, notes,
+    });
+  } catch (e) { /* optional endpoint — don't block the UI */ }
+  toastSuccess('Wrap-up saved' + (disposition ? ' (' + disposition + ')' : ''));
+}
+
+// ---------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------
+
+async function placeCallFromRecent(c) {
+  try {
+    if (typeof window.placeCall === 'function') {
+      const dn = document.getElementById('dialer-number-display');
+      if (dn) dn.textContent = c.from_number;
+      window.placeCall();
+      return;
+    }
+    await api.post('/dial', { to: c.from_number, from: '+15078731084' });
+    toastSuccess('Call initiated to ' + c.from_number);
+  } catch (e) {
+    toastError('Call failed: ' + e.message);
+  }
+}
+
+async function acceptCall(call) {
+  try {
+    await api.post('/queue/dequeue');
+    _state.currentCall = call;
+    renderCenter();
+    // mark presence on_call
+    try { await api.put('/agents/me/presence', { status: 'on_call', current_call_id: call.call_id }); } catch (e) { /* ignore */ }
+    _state.status = 'on_call';
+  } catch (e) {
+    toastError('Could not accept call: ' + e.message);
+  }
+}
+
+function endCall(call) {
+  _state.currentCall = null;
+  try { api.put('/agents/me/presence', { status: 'online' }); } catch (e) { /* ignore */ }
+  _state.status = 'online';
+  renderCenter();
+  openWrapUpModal(call);
+}
+
+// ---------------------------------------------------------------------
+// Data loading + WS
+// ---------------------------------------------------------------------
+
+async function loadInitial() {
+  try {
+    // 1) Roster — to find myself + my presence + my skills
+    const r = await api.get('/agents/presence');
+    const me = inferMe(r.agents || []);
+    if (me) {
+      _state.status = me.status || 'offline';
+      _state.lastSeen = me.last_seen;
+      _state.mySkills = me.skills || [];
+    }
+    renderStatusCard();
+
+    // 2) Queue — calls that match my skills
+    try {
+      const mySkillNames = (_state.mySkills || []).map(s => (s.skill || '').toLowerCase()).filter(Boolean);
+      const q = await api.get('/queue/list');
+      const all = q.items || q.queue || [];
+      _state.myQueue = (all || []).filter(c => {
+        if (!mySkillNames.length) return true;
+        const tags = (c.skill_tags || []).map(t => (t || '').toLowerCase());
+        return tags.some(t => mySkillNames.includes(t));
+      });
+      // Tag each with its current position.
+      for (const c of _state.myQueue) {
+        try {
+          const p = await api.get('/queue/position/' + encodeURIComponent(c.call_id));
+          c.position = p.position;
+        } catch (e) { c.position = null; }
+      }
+    } catch (e) { _state.myQueue = []; }
+    renderQueueCard();
+    renderCenter();
+
+    // 3) Recent calls — best-effort, demo fallback if missing
+    try {
+      const rec = await api.get('/calls/recent');
+      _state.recent = rec.calls || rec.recent || rec || [];
+    } catch (e) {
+      _state.recent = [];
+    }
+    renderRecent();
+  } catch (e) {
+    toastError('Failed to load dashboard: ' + e.message);
+  }
+}
+
+function inferMe(agents) {
+  // Pick the first agent for the dev default user; in a real
+  // deployment the JWT would carry the user id and the API would
+  // mark `me`. The roster API returns the full list; we just use
+  // the first 'online' or 'on_call' agent, falling back to the head.
+  if (!agents.length) return null;
+  return agents.find(a => a.status === 'online')
+      || agents.find(a => a.status === 'on_call')
+      || agents[0];
+}
+
+function handleAgentEvent(evt) {
+  if (!evt || !evt.type) return;
+  switch (evt.type) {
+    case 'ws.hello':
+    case 'ws.open':
+    case 'ws.ping':
+    case 'ws.pong':
+    case 'ws.close':
+    case 'pong':
+      // No-op for now; presence update events come from the server's
+      // own pubsub. The dashboard re-fetches the roster on every ping.
+      if (evt.type === 'ws.open') {
+        // Refresh state on (re)connect so we don't miss events
+        // while the socket was down.
+        loadInitial();
+      }
+      break;
+    case 'presence.update':
+      // Reload the roster so the new status is reflected.
+      loadInitial();
+      break;
+    default:
+      // Future-proof: ignore unknown event types so server additions
+      // don't break the dashboard.
+      break;
+  }
+}

@@ -151,3 +151,92 @@ export const api = {
 };
 
 export function baseUrl() { return currentBase(); }
+
+/* ---------------------------------------------------------------------
+ * WebSocket subscription — Phase E-A (#33).
+ *
+ * `subscribeAgentEvents(onEvent)` opens a WebSocket to the backend's
+ * presence channel (`/api/agents/me/events`), and invokes `onEvent`
+ * with every JSON frame the server sends. Returns an `unsubscribe()`
+ * function that closes the socket.
+ *
+ * The connection auto-reconnects on drop with exponential backoff
+ * (capped at 30s) so the dashboard stays live across transient
+ * network blips. The unsubscribe function is idempotent.
+ *
+ * If a JWT is in the tokenStore, it is forwarded as the
+ * ``session_token`` query string so the server can bind the
+ * connection to the right user.
+ * ------------------------------------------------------------------- */
+export function subscribeAgentEvents(onEvent) {
+  if (typeof WebSocket === 'undefined') {
+    // Browser without WebSocket support (very rare in 2026, but
+    // happens in jsdom test envs) — return a noop unsubscribe.
+    return () => {};
+  }
+
+  let ws = null;
+  let closedByUser = false;
+  let retryDelay = 1000;
+  const RETRY_MAX = 30000;
+  let retryTimer = null;
+
+  function url() {
+    const base = currentBase();
+    const proto = base.startsWith('https://') ? 'wss://' : 'ws://';
+    const host = base.replace(/^https?:\/\//, '');
+    const tok = tokenStore.get().token || '';
+    const qs = tok ? `?session_token=${encodeURIComponent(tok)}` : '';
+    return `${proto}${host}/api/agents/me/events${qs}`;
+  }
+
+  function connect() {
+    if (closedByUser) return;
+    try {
+      ws = new WebSocket(url());
+    } catch (e) {
+      scheduleRetry();
+      return;
+    }
+    ws.addEventListener('open', () => {
+      retryDelay = 1000; // reset backoff after a successful connect
+      try { onEvent({ type: 'ws.open', data: {} }); } catch (e) { /* ignore */ }
+    });
+    ws.addEventListener('message', (ev) => {
+      let parsed = null;
+      try { parsed = JSON.parse(ev.data); } catch (e) { return; }
+      try { onEvent(parsed); } catch (e) { console.warn('agent event handler threw', e); }
+    });
+    ws.addEventListener('close', () => {
+      try { onEvent({ type: 'ws.close', data: {} }); } catch (e) { /* ignore */ }
+      if (!closedByUser) scheduleRetry();
+    });
+    ws.addEventListener('error', () => {
+      // 'close' will fire right after; let that handle the retry.
+    });
+  }
+
+  function scheduleRetry() {
+    if (closedByUser) return;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, retryDelay);
+    retryDelay = Math.min(RETRY_MAX, retryDelay * 2);
+  }
+
+  function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify(msg)); } catch (e) { /* ignore */ }
+    }
+  }
+
+  connect();
+
+  return function unsubscribe() {
+    closedByUser = true;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (ws) {
+      try { ws.close(); } catch (e) { /* ignore */ }
+      ws = null;
+    }
+  };
+}
