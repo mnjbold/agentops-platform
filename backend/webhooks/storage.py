@@ -216,6 +216,232 @@ CREATE TRIGGER IF NOT EXISTS recordings_au AFTER UPDATE ON recordings BEGIN
     INSERT INTO recordings_fts(rowid, from_number, to_number, transcript)
     VALUES (new.rowid, new.from_number, new.to_number, COALESCE(new.transcript, ''));
 END;
+
+-- ────────────── Phase B backend (issues #13, #14, #15, #17, #18) ──────────────
+
+-- workflows (#13): the visual no-code IVR builder stores a JSON graph.
+-- `graph_json` is a free-form JSON object: {nodes:[{id,type,...}],
+-- edges:[{from,to,condition?}], settings:{...}}. The executor (in
+-- workflow_engine.py) walks the graph starting at `entry_node_id`.
+CREATE TABLE IF NOT EXISTS workflows (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    graph_json    TEXT NOT NULL DEFAULT '{}',
+    entry_node_id TEXT,
+    version       INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_workflows_tenant ON workflows(tenant_id);
+
+-- A "number" is a Telnyx phone number owned by the tenant. The assignment
+-- column on the row is the simplest possible pointer — workflow_id OR
+-- assistant_id OR 'direct'. The richer number_assignments table (#15)
+-- keeps a historical log + supports multiple kinds per row.
+CREATE TABLE IF NOT EXISTS phone_numbers (
+    id                TEXT PRIMARY KEY,
+    tenant_id         TEXT NOT NULL,
+    phone_number      TEXT NOT NULL,
+    telnyx_id         TEXT,
+    country_code      TEXT,
+    monthly_cost      REAL,
+    per_minute_rate   REAL,
+    assignment_kind   TEXT,   -- 'workflow' | 'assistant' | 'direct' | NULL
+    assignment_target TEXT,   -- workflow_id | assistant_id | 'inbox'
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_phone_numbers_tenant ON phone_numbers(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_phone_numbers_tenant_phone
+    ON phone_numbers(tenant_id, phone_number);
+
+-- Historical log of number assignments (#15). Every time a number's
+-- assignment changes we append a row; the current state is denormalised
+-- on phone_numbers.assignment_*.
+CREATE TABLE IF NOT EXISTS number_assignments (
+    id           TEXT PRIMARY KEY,
+    tenant_id    TEXT NOT NULL,
+    number_id    TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    target_id    TEXT,
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+    FOREIGN KEY (number_id) REFERENCES phone_numbers(id)
+);
+CREATE INDEX IF NOT EXISTS idx_number_assignments_tenant
+    ON number_assignments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_number_assignments_number
+    ON number_assignments(number_id);
+
+-- assistants (#14): a tenant-scoped mirror of the Telnyx AI assistant.
+-- telnyx_id is the actual resource id we round-trip with; everything else
+-- is a local cache + config snapshot.
+CREATE TABLE IF NOT EXISTS assistants (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    telnyx_id     TEXT,
+    voice         TEXT,
+    system_prompt TEXT,
+    model         TEXT,
+    tools_json    TEXT NOT NULL DEFAULT '[]',
+    greeting      TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_assistants_tenant ON assistants(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistants_tenant_telnyx
+    ON assistants(tenant_id, telnyx_id);
+
+-- Live transcript + tool-call log per assistant test call (#14). Append-only.
+CREATE TABLE IF NOT EXISTS assistant_call_log (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    assistant_id  TEXT NOT NULL,
+    call_id       TEXT,
+    role          TEXT NOT NULL,    -- 'user' | 'assistant' | 'tool' | 'system'
+    content       TEXT,
+    tool_name     TEXT,
+    tool_args     TEXT,
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_call_log_call
+    ON assistant_call_log(tenant_id, call_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_call_log_assistant
+    ON assistant_call_log(tenant_id, assistant_id);
+
+-- Campaign AI handoff log (#17). One row per (campaign, contact) when
+-- the AI hands the call off to a human agent. `mode` is the campaign
+-- mode at the time of handoff; useful for analytics.
+CREATE TABLE IF NOT EXISTS campaign_handoffs (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    campaign_id     TEXT NOT NULL,
+    contact_id      TEXT,
+    call_id         TEXT,
+    mode            TEXT NOT NULL,   -- 'ai_then_human' | 'human' | 'voicemail_drop'
+    human_agent_id  TEXT,
+    transferred_at  TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_handoffs_tenant
+    ON campaign_handoffs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_handoffs_campaign
+    ON campaign_handoffs(tenant_id, campaign_id);
+
+-- ────────────── Phase B business surface (issues #16, #19, #20) ──────────────
+-- The other Phase B worker owns #13/14/15/17/18 (workflows/agents/numbers/handoff).
+-- This block covers analytics rollup (#16), billing (#19), and the append-only
+-- audit log (#20). They are added to storage.py because everything else
+-- (tenants, deliveries, contacts) is here too, and the new screens join
+-- against the existing tables.
+
+-- #16 — flat per-tenant per-day rollup. A nightly cron rebuilds it from
+-- the deliveries + call event tables; the analytics API can also
+-- backfill on the fly for the requested window.
+CREATE TABLE IF NOT EXISTS analytics_rollup_daily (
+    tenant_id   TEXT NOT NULL,
+    day         TEXT NOT NULL,           -- 'YYYY-MM-DD' UTC
+    calls_in    INTEGER NOT NULL DEFAULT 0,
+    calls_out   INTEGER NOT NULL DEFAULT 0,
+    sms_in      INTEGER NOT NULL DEFAULT 0,
+    sms_out     INTEGER NOT NULL DEFAULT 0,
+    spend_cents INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (tenant_id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_rollup_day ON analytics_rollup_daily(day);
+
+-- #19 — Stripe-driven subscription + usage. We keep a denormalised
+-- ``tenant_id → plan`` here so the dashboard and rate-limit gate can
+-- read it without joining Stripe on every request.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id                      TEXT PRIMARY KEY,
+    tenant_id               TEXT NOT NULL UNIQUE,
+    plan                    TEXT NOT NULL DEFAULT 'free',
+    status                  TEXT NOT NULL DEFAULT 'active',
+    stripe_customer_id      TEXT,
+    stripe_subscription_id  TEXT,
+    current_period_start    TEXT,
+    current_period_end      TEXT,
+    cancel_at_period_end    INTEGER NOT NULL DEFAULT 0,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subs_stripe ON subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subs_status ON subscriptions(status);
+
+CREATE TABLE IF NOT EXISTS usage_records (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK(kind IN ('voice_minutes','sms_segments','numbers')),
+    quantity        INTEGER NOT NULL DEFAULT 0,
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    billed          INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_tenant_period ON usage_records(tenant_id, period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_usage_kind ON usage_records(kind);
+
+-- #20 — append-only audit log. The middleware writes one row per /api/*
+-- request. Triggers raise on UPDATE/DELETE so history cannot be rewritten
+-- (an operator can only move rows into audit_log_archive).
+CREATE TABLE IF NOT EXISTS audit_log (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL,
+    user_id          TEXT,
+    action           TEXT NOT NULL,
+    target           TEXT,
+    ip               TEXT,
+    user_agent       TEXT,
+    request_id       TEXT,
+    method           TEXT,
+    path             TEXT,
+    response_status  INTEGER,
+    response_time_ms INTEGER,
+    request_body     TEXT,
+    response_body    TEXT,
+    timestamp        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_ts ON audit_log(tenant_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log is append-only; use audit_log_archive instead');
+END;
+
+CREATE TABLE IF NOT EXISTS audit_log_archive (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL,
+    user_id          TEXT,
+    action           TEXT NOT NULL,
+    target           TEXT,
+    ip               TEXT,
+    user_agent       TEXT,
+    request_id       TEXT,
+    method           TEXT,
+    path             TEXT,
+    response_status  INTEGER,
+    response_time_ms INTEGER,
+    request_body     TEXT,
+    response_body    TEXT,
+    timestamp        TEXT NOT NULL,
+    archived_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_arch_tenant_ts ON audit_log_archive(tenant_id, timestamp);
 """
 
 
@@ -259,6 +485,7 @@ class Store:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             self._run_migrations()
+            self._run_migrations_phase_b()
             cur = self._conn.execute(
                 "SELECT id FROM tenants WHERE id = 'default'"
             )
@@ -300,6 +527,46 @@ class Store:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tenants_tier ON tenants(tier)"
         )
+
+    def _run_migrations_phase_b(self) -> None:
+        """Phase B (issues #13, #14, #15, #17, #18) migrations.
+
+        - ``campaigns.outbound_mode`` (default 'human')
+        - ``campaigns.assistant_id`` (nullable FK to assistants)
+        - ``campaigns.voicemail_audio_url`` (nullable — populated on upload)
+        - ``campaigns.voicemail_no_answer_action`` ('hangup'|'voicemail'|'retry')
+        - ``campaigns.ring_timeout_secs`` (per-campaign no-answer timeout)
+
+        Each ALTER is guarded with a PRAGMA check so the migration is
+        idempotent across restarts and across pre-Phase-B databases.
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(campaigns)").fetchall()}
+        if "outbound_mode" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN outbound_mode TEXT NOT NULL DEFAULT 'human'"
+            )
+            log.info("Migrated campaigns.outbound_mode")
+        if "assistant_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN assistant_id TEXT"
+            )
+            log.info("Migrated campaigns.assistant_id")
+        if "voicemail_audio_url" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN voicemail_audio_url TEXT"
+            )
+            log.info("Migrated campaigns.voicemail_audio_url")
+        if "voicemail_no_answer_action" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN voicemail_no_answer_action "
+                "TEXT NOT NULL DEFAULT 'hangup'"
+            )
+            log.info("Migrated campaigns.voicemail_no_answer_action")
+        if "ring_timeout_secs" not in cols:
+            self._conn.execute(
+                "ALTER TABLE campaigns ADD COLUMN ring_timeout_secs INTEGER NOT NULL DEFAULT 25"
+            )
+            log.info("Migrated campaigns.ring_timeout_secs")
 
     def close(self) -> None:
         with self._lock:
@@ -1066,6 +1333,758 @@ class Store:
             (tenant_id, f"%{marker}%"),
         )
         return rows
+
+    # ──────────────── Phase B (issues #13, #14, #15, #17, #18) ────────────────
+    # ─────────────────────────── workflows (#13) ─────────────────────────────
+
+    def create_workflow(
+        self,
+        tenant_id: str,
+        name: str,
+        graph_json: dict,
+        entry_node_id: Optional[str] = None,
+    ) -> dict:
+        wid = _new_id("wf")
+        now = _utcnow()
+        with self._lock:
+            self.ensure_tenant(tenant_id)
+            self._conn.execute(
+                "INSERT INTO workflows("
+                "id, tenant_id, name, graph_json, entry_node_id, "
+                "version, created_at, updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    wid, tenant_id, name,
+                    json.dumps(graph_json or {}),
+                    entry_node_id,
+                    1, now, now,
+                ),
+            )
+        wf = self.get_workflow(tenant_id, wid)
+        assert wf is not None
+        return wf
+
+    def list_workflows(self, tenant_id: str) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM workflows WHERE tenant_id = ? ORDER BY updated_at DESC",
+            (tenant_id,),
+        )
+        for r in rows:
+            r["graph"] = _safe_json_dict(r.get("graph_json"))
+        return rows
+
+    def get_workflow(self, tenant_id: str, workflow_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM workflows WHERE tenant_id = ? AND id = ?",
+            (tenant_id, workflow_id),
+        )
+        if row:
+            row["graph"] = _safe_json_dict(row.get("graph_json"))
+        return row
+
+    def update_workflow(
+        self,
+        tenant_id: str,
+        workflow_id: str,
+        *,
+        name: Optional[str] = None,
+        graph_json: Optional[dict] = None,
+        entry_node_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        existing = self.get_workflow(tenant_id, workflow_id)
+        if not existing:
+            return None
+        sets: list[str] = []
+        vals: list[Any] = []
+        if name is not None:
+            sets.append("name = ?")
+            vals.append(name)
+        if graph_json is not None:
+            sets.append("graph_json = ?")
+            vals.append(json.dumps(graph_json))
+        if entry_node_id is not None:
+            sets.append("entry_node_id = ?")
+            vals.append(entry_node_id)
+        if not sets:
+            return existing
+        # Bump version on every save so the webhook handler can detect a
+        # mid-call graph change and log a warning (we don't auto-restart
+        # in-flight calls).
+        sets.append("version = version + 1")
+        sets.append("updated_at = ?")
+        vals.append(_utcnow())
+        vals.extend([tenant_id, workflow_id])
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE workflows SET {', '.join(sets)} "
+                "WHERE tenant_id = ? AND id = ?",
+                tuple(vals),
+            )
+        return self.get_workflow(tenant_id, workflow_id)
+
+    def delete_workflow(self, tenant_id: str, workflow_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM workflows WHERE tenant_id = ? AND id = ?",
+                (tenant_id, workflow_id),
+            )
+            return cur.rowcount > 0
+
+    # ─────────────────────────── phone numbers (#15) ────────────────────────
+
+    def upsert_phone_number(
+        self,
+        tenant_id: str,
+        phone_number: str,
+        *,
+        telnyx_id: Optional[str] = None,
+        country_code: Optional[str] = None,
+        monthly_cost: Optional[float] = None,
+        per_minute_rate: Optional[float] = None,
+    ) -> dict:
+        """Insert or update a phone number row. Idempotent on
+        (tenant_id, phone_number) so re-syncing from Telnyx doesn't dup.
+        """
+        now = _utcnow()
+        with self._lock:
+            self.ensure_tenant(tenant_id)
+            existing = self._conn.execute(
+                "SELECT id FROM phone_numbers "
+                "WHERE tenant_id = ? AND phone_number = ?",
+                (tenant_id, phone_number),
+            ).fetchone()
+            if existing is None:
+                nid = _new_id("num")
+                self._conn.execute(
+                    "INSERT INTO phone_numbers("
+                    "id, tenant_id, phone_number, telnyx_id, country_code, "
+                    "monthly_cost, per_minute_rate, created_at, updated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?)",
+                    (nid, tenant_id, phone_number, telnyx_id, country_code,
+                     monthly_cost, per_minute_rate, now, now),
+                )
+            else:
+                # Refill any non-null fields provided.
+                sets: list[str] = []
+                vals: list[Any] = []
+                if telnyx_id is not None:
+                    sets.append("telnyx_id = ?")
+                    vals.append(telnyx_id)
+                if country_code is not None:
+                    sets.append("country_code = ?")
+                    vals.append(country_code)
+                if monthly_cost is not None:
+                    sets.append("monthly_cost = ?")
+                    vals.append(monthly_cost)
+                if per_minute_rate is not None:
+                    sets.append("per_minute_rate = ?")
+                    vals.append(per_minute_rate)
+                if sets:
+                    sets.append("updated_at = ?")
+                    vals.append(now)
+                    vals.extend([tenant_id, existing[0]])
+                    self._conn.execute(
+                        f"UPDATE phone_numbers SET {', '.join(sets)} "
+                        "WHERE tenant_id = ? AND id = ?",
+                        tuple(vals),
+                    )
+        return self.get_phone_number_by_phone(tenant_id, phone_number)  # type: ignore[return-value]
+
+    def get_phone_number(self, tenant_id: str, number_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM phone_numbers WHERE tenant_id = ? AND id = ?",
+            (tenant_id, number_id),
+        )
+
+    def get_phone_number_by_phone(
+        self, tenant_id: str, phone_number: str
+    ) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM phone_numbers WHERE tenant_id = ? AND phone_number = ?",
+            (tenant_id, phone_number),
+        )
+
+    def list_phone_numbers(self, tenant_id: str) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM phone_numbers WHERE tenant_id = ? "
+            "ORDER BY created_at DESC",
+            (tenant_id,),
+        )
+
+    def find_workflow_for_number(
+        self, tenant_id: str, phone_number: str
+    ) -> Optional[dict]:
+        """Resolve a called E.164 number to its assigned workflow, if any.
+
+        Used by the webhook handler to kick off the DAG for inbound calls.
+        """
+        return self._row(
+            "SELECT w.* FROM workflows w "
+            "JOIN phone_numbers n ON n.tenant_id = w.tenant_id "
+            "WHERE n.tenant_id = ? AND n.phone_number = ? "
+            "AND n.assignment_kind = 'workflow' AND n.assignment_target = w.id",
+            (tenant_id, phone_number),
+        )
+
+    def set_number_assignment(
+        self,
+        tenant_id: str,
+        number_id: str,
+        kind: Optional[str],
+        target_id: Optional[str],
+    ) -> Optional[dict]:
+        """Set the assignment of a number. Pass kind=None to clear.
+
+        Also appends a row to number_assignments as a historical log.
+        """
+        if kind is not None and kind not in ("workflow", "assistant", "direct"):
+            raise ValueError(f"invalid assignment kind: {kind}")
+        with self._lock:
+            existing = self._row(
+                "SELECT id FROM phone_numbers WHERE tenant_id = ? AND id = ?",
+                (tenant_id, number_id),
+            )
+            if existing is None:
+                return None
+            self._conn.execute(
+                "UPDATE phone_numbers SET assignment_kind = ?, "
+                "assignment_target = ?, updated_at = ? "
+                "WHERE tenant_id = ? AND id = ?",
+                (kind, target_id if kind else None, _utcnow(),
+                 tenant_id, number_id),
+            )
+            if kind:
+                aid = _new_id("asgn")
+                self._conn.execute(
+                    "INSERT INTO number_assignments("
+                    "id, tenant_id, number_id, kind, target_id, created_at"
+                    ") VALUES (?,?,?,?,?,?)",
+                    (aid, tenant_id, number_id, kind, target_id, _utcnow()),
+                )
+        return self.get_phone_number(tenant_id, number_id)
+
+    def delete_phone_number(self, tenant_id: str, number_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM phone_numbers WHERE tenant_id = ? AND id = ?",
+                (tenant_id, number_id),
+            )
+            return cur.rowcount > 0
+
+    def list_number_assignments(
+        self, tenant_id: str, number_id: str
+    ) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM number_assignments "
+            "WHERE tenant_id = ? AND number_id = ? ORDER BY created_at DESC",
+            (tenant_id, number_id),
+        )
+
+    # ─────────────────────────── assistants (#14) ────────────────────────────
+
+    def create_assistant(
+        self,
+        tenant_id: str,
+        name: str,
+        telnyx_id: Optional[str] = None,
+        voice: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        tools: Optional[list[dict]] = None,
+        greeting: Optional[str] = None,
+    ) -> dict:
+        aid = _new_id("ast")
+        now = _utcnow()
+        with self._lock:
+            self.ensure_tenant(tenant_id)
+            self._conn.execute(
+                "INSERT INTO assistants("
+                "id, tenant_id, name, telnyx_id, voice, system_prompt, "
+                "model, tools_json, greeting, created_at, updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (aid, tenant_id, name, telnyx_id, voice, system_prompt,
+                 model, json.dumps(tools or []), greeting, now, now),
+            )
+        return self.get_assistant(tenant_id, aid)  # type: ignore[return-value]
+
+    def list_assistants(self, tenant_id: str) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM assistants WHERE tenant_id = ? "
+            "ORDER BY updated_at DESC",
+            (tenant_id,),
+        )
+        for r in rows:
+            r["tools"] = _safe_json_list(r.get("tools_json"))
+        return rows
+
+    def get_assistant(self, tenant_id: str, assistant_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM assistants WHERE tenant_id = ? AND id = ?",
+            (tenant_id, assistant_id),
+        )
+        if row:
+            row["tools"] = _safe_json_list(row.get("tools_json"))
+        return row
+
+    def get_assistant_by_telnyx_id(
+        self, tenant_id: str, telnyx_id: str
+    ) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM assistants WHERE tenant_id = ? AND telnyx_id = ?",
+            (tenant_id, telnyx_id),
+        )
+        if row:
+            row["tools"] = _safe_json_list(row.get("tools_json"))
+        return row
+
+    def update_assistant(
+        self,
+        tenant_id: str,
+        assistant_id: str,
+        *,
+        name: Optional[str] = None,
+        telnyx_id: Optional[str] = None,
+        voice: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        tools: Optional[list[dict]] = None,
+        greeting: Optional[str] = None,
+    ) -> Optional[dict]:
+        existing = self.get_assistant(tenant_id, assistant_id)
+        if not existing:
+            return None
+        sets: list[str] = []
+        vals: list[Any] = []
+        for col, val in (
+            ("name", name), ("telnyx_id", telnyx_id), ("voice", voice),
+            ("system_prompt", system_prompt), ("model", model),
+            ("greeting", greeting),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?")
+                vals.append(val)
+        if tools is not None:
+            sets.append("tools_json = ?")
+            vals.append(json.dumps(tools))
+        if not sets:
+            return existing
+        sets.append("updated_at = ?")
+        vals.append(_utcnow())
+        vals.extend([tenant_id, assistant_id])
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE assistants SET {', '.join(sets)} "
+                "WHERE tenant_id = ? AND id = ?",
+                tuple(vals),
+            )
+        return self.get_assistant(tenant_id, assistant_id)
+
+    def delete_assistant(self, tenant_id: str, assistant_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM assistants WHERE tenant_id = ? AND id = ?",
+                (tenant_id, assistant_id),
+            )
+            return cur.rowcount > 0
+
+    def append_assistant_log(
+        self,
+        tenant_id: str,
+        assistant_id: str,
+        role: str,
+        content: Optional[str] = None,
+        *,
+        call_id: Optional[str] = None,
+        tool_name: Optional[str] = None,
+        tool_args: Optional[dict] = None,
+    ) -> dict:
+        """Append a row to assistant_call_log (live transcript + tool calls)."""
+        lid = _new_id("alg")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO assistant_call_log("
+                "id, tenant_id, assistant_id, call_id, role, content, "
+                "tool_name, tool_args, created_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?)",
+                (lid, tenant_id, assistant_id, call_id, role, content,
+                 tool_name,
+                 json.dumps(tool_args) if tool_args is not None else None,
+                 _utcnow()),
+            )
+        return {"id": lid, "tenant_id": tenant_id, "assistant_id": assistant_id,
+                "call_id": call_id, "role": role, "content": content,
+                "tool_name": tool_name, "tool_args": tool_args}
+
+    def list_assistant_call_log(
+        self, tenant_id: str, assistant_id: str, limit: int = 100
+    ) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM assistant_call_log "
+            "WHERE tenant_id = ? AND assistant_id = ? "
+            "ORDER BY created_at ASC LIMIT ?",
+            (tenant_id, assistant_id, int(limit)),
+        )
+        for r in rows:
+            if r.get("tool_args"):
+                try:
+                    r["tool_args"] = json.loads(r["tool_args"])
+                except json.JSONDecodeError:
+                    r["tool_args"] = None
+        return rows
+
+    # ──────────────────── analytics rollup (#16) ───────────────────────────
+    # Aggregations happen on the deliveries table on the fly; the rollup
+    # table is just a flat snapshot the dashboard reads in O(1) rows.
+    # The cron job (see ``backend/analytics/aggregator.py``) refreshes
+    # ``day = yesterday`` every night.
+
+    def get_rollup_window(
+        self, tenant_id: str, day_from: str, day_to: str
+    ) -> list[dict]:
+        return self._rows(
+            "SELECT day, calls_in, calls_out, sms_in, sms_out, spend_cents "
+            "FROM analytics_rollup_daily "
+            "WHERE tenant_id = ? AND day BETWEEN ? AND ? "
+            "ORDER BY day ASC",
+            (tenant_id, day_from, day_to),
+        )
+
+    def upsert_rollup_day(
+        self,
+        tenant_id: str,
+        day: str,
+        calls_in: int = 0,
+        calls_out: int = 0,
+        sms_in: int = 0,
+        sms_out: int = 0,
+        spend_cents: int = 0,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO analytics_rollup_daily("
+                "tenant_id, day, calls_in, calls_out, sms_in, sms_out, spend_cents"
+                ") VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(tenant_id, day) DO UPDATE SET "
+                "calls_in=excluded.calls_in, calls_out=excluded.calls_out, "
+                "sms_in=excluded.sms_in, sms_out=excluded.sms_out, "
+                "spend_cents=excluded.spend_cents",
+                (tenant_id, day, calls_in, calls_out, sms_in, sms_out, spend_cents),
+            )
+
+    def count_deliveries_in_window(
+        self,
+        tenant_id: str,
+        day_from: str,
+        day_to: str,
+    ) -> dict:
+        """Live count of deliveries grouped by (kind_bucket, direction) for
+        a window. Used by the analytics screen when the rollup is empty
+        (e.g. just-initialised DB, no cron has run yet).
+
+        The ``kind`` column on ``deliveries`` is freeform; we bucket:
+        - calls: kind in ('outbound_call','inbound_call','call') — counted
+          by status (anything not 'failed' counts as a call placed)
+        - sms:   kind in ('sms','outbound_sms','inbound_sms') — counted
+          regardless of status
+        """
+        sql = (
+            "SELECT "
+            "  SUM(CASE WHEN (kind LIKE '%call%' OR kind = 'call') THEN 1 ELSE 0 END) AS calls_total, "
+            "  SUM(CASE WHEN (kind LIKE 'inbound%' OR kind = 'inbound_call') AND (kind LIKE '%call%' OR kind = 'call') THEN 1 ELSE 0 END) AS calls_in, "
+            "  SUM(CASE WHEN (kind LIKE 'outbound%' OR kind = 'outbound_call') AND (kind LIKE '%call%' OR kind = 'call') THEN 1 ELSE 0 END) AS calls_out, "
+            "  SUM(CASE WHEN kind LIKE '%sms%' OR kind = 'sms' THEN 1 ELSE 0 END) AS sms_total, "
+            "  SUM(CASE WHEN kind LIKE 'inbound%' AND (kind LIKE '%sms%' OR kind = 'sms') THEN 1 ELSE 0 END) AS sms_in, "
+            "  SUM(CASE WHEN kind LIKE 'outbound%' AND (kind LIKE '%sms%' OR kind = 'sms') THEN 1 ELSE 0 END) AS sms_out "
+            "FROM deliveries "
+            "WHERE tenant_id = ? AND substr(created_at, 1, 10) BETWEEN ? AND ?"
+        )
+        row = self._row(sql, (tenant_id, day_from, day_to)) or {}
+        return {
+            "calls_total": int(row.get("calls_total") or 0),
+            "calls_in": int(row.get("calls_in") or 0),
+            "calls_out": int(row.get("calls_out") or 0),
+            "sms_total": int(row.get("sms_total") or 0),
+            "sms_in": int(row.get("sms_in") or 0),
+            "sms_out": int(row.get("sms_out") or 0),
+        }
+
+    # ──────────────────── subscriptions + usage (#19) ──────────────────────
+
+    def get_subscription(self, tenant_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM subscriptions WHERE tenant_id = ?",
+            (tenant_id,),
+        )
+
+    def upsert_subscription(
+        self,
+        tenant_id: str,
+        plan: str,
+        status: str = "active",
+        stripe_customer_id: Optional[str] = None,
+        stripe_subscription_id: Optional[str] = None,
+        current_period_start: Optional[str] = None,
+        current_period_end: Optional[str] = None,
+        cancel_at_period_end: int = 0,
+    ) -> dict:
+        now = _utcnow()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM subscriptions WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+            if existing is None:
+                sid = _new_id("sub")
+                self._conn.execute(
+                    "INSERT INTO subscriptions("
+                    "id, tenant_id, plan, status, stripe_customer_id, "
+                    "stripe_subscription_id, current_period_start, "
+                    "current_period_end, cancel_at_period_end, "
+                    "created_at, updated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (sid, tenant_id, plan, status, stripe_customer_id,
+                     stripe_subscription_id, current_period_start,
+                     current_period_end, int(cancel_at_period_end), now, now),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE subscriptions SET "
+                    "plan=?, status=?, stripe_customer_id=COALESCE(?, stripe_customer_id), "
+                    "stripe_subscription_id=COALESCE(?, stripe_subscription_id), "
+                    "current_period_start=COALESCE(?, current_period_start), "
+                    "current_period_end=COALESCE(?, current_period_end), "
+                    "cancel_at_period_end=?, updated_at=? "
+                    "WHERE tenant_id=?",
+                    (plan, status, stripe_customer_id, stripe_subscription_id,
+                     current_period_start, current_period_end,
+                     int(cancel_at_period_end), now, tenant_id),
+                )
+        sub = self.get_subscription(tenant_id)
+        assert sub is not None
+        return sub
+
+    def record_usage(
+        self,
+        tenant_id: str,
+        kind: str,
+        quantity: int,
+        period_start: str,
+        period_end: str,
+    ) -> dict:
+        if kind not in ("voice_minutes", "sms_segments", "numbers"):
+            raise ValueError(f"invalid usage kind: {kind}")
+        uid = _new_id("usg")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO usage_records("
+                "id, tenant_id, kind, quantity, period_start, period_end, "
+                "billed, created_at"
+                ") VALUES (?,?,?,?,?,?,0,?)",
+                (uid, tenant_id, kind, int(quantity),
+                 period_start, period_end, _utcnow()),
+            )
+        return {"id": uid, "tenant_id": tenant_id, "kind": kind,
+                "quantity": quantity, "period_start": period_start,
+                "period_end": period_end}
+
+    def sum_usage_in_period(
+        self, tenant_id: str, kind: str, period_start: str, period_end: str
+    ) -> int:
+        row = self._row(
+            "SELECT COALESCE(SUM(quantity), 0) AS total "
+            "FROM usage_records "
+            "WHERE tenant_id = ? AND kind = ? "
+            "AND period_start = ? AND period_end = ?",
+            (tenant_id, kind, period_start, period_end),
+        )
+        return int((row or {}).get("total") or 0)
+
+    # ─────────────────────── audit log (#20) ───────────────────────────────
+
+    def append_audit(self, entry: dict) -> str:
+        """Append one row to audit_log. Triggers forbid UPDATE/DELETE.
+
+        The caller (middleware) passes a fully-prepared dict so we can
+        keep the SQL minimal. The id is generated here.
+        """
+        aid = _new_id("aud")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO audit_log("
+                "id, tenant_id, user_id, action, target, ip, user_agent, "
+                "request_id, method, path, response_status, response_time_ms, "
+                "request_body, response_body, timestamp"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    aid,
+                    entry.get("tenant_id") or "default",
+                    entry.get("user_id"),
+                    entry.get("action") or "unknown",
+                    entry.get("target"),
+                    entry.get("ip"),
+                    entry.get("user_agent"),
+                    entry.get("request_id"),
+                    entry.get("method"),
+                    entry.get("path"),
+                    entry.get("response_status"),
+                    entry.get("response_time_ms"),
+                    entry.get("request_body"),
+                    entry.get("response_body"),
+                    entry.get("timestamp") or _utcnow(),
+                ),
+            )
+        return aid
+
+    def list_audit(
+        self,
+        tenant_id: str,
+        user_id: Optional[str] = None,
+        action: Optional[str] = None,
+        day_from: Optional[str] = None,
+        day_to: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        where = ["tenant_id = ?"]
+        params: list[Any] = [tenant_id]
+        if user_id:
+            where.append("user_id = ?")
+            params.append(user_id)
+        if action:
+            where.append("action = ?")
+            params.append(action)
+        if day_from:
+            where.append("substr(timestamp, 1, 10) >= ?")
+            params.append(day_from)
+        if day_to:
+            where.append("substr(timestamp, 1, 10) <= ?")
+            params.append(day_to)
+        params.extend([int(limit), int(offset)])
+        sql = (
+            f"SELECT id, tenant_id, user_id, action, target, ip, user_agent, "
+            f"request_id, method, path, response_status, response_time_ms, "
+            f"timestamp FROM audit_log "
+            f"WHERE {' AND '.join(where)} "
+            f"ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        )
+        return self._rows(sql, tuple(params))
+
+    def get_audit(self, tenant_id: str, audit_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM audit_log WHERE tenant_id = ? AND id = ?",
+            (tenant_id, audit_id),
+        )
+
+    def archive_audit_before(self, cutoff_iso: str) -> int:
+        """Move audit rows older than ``cutoff_iso`` into audit_log_archive.
+        Triggers block the DELETE; we copy + DELETE in a single transaction.
+        Returns the number of rows archived.
+
+        ``zstd`` is optional — if installed, request/response bodies are
+        compressed before write. Otherwise the bodies are moved as plain
+        text. Either way, the response is identical.
+        """
+        zstd = None
+        try:
+            import zstandard as zstd  # type: ignore
+        except Exception:
+            zstd = None
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, tenant_id, user_id, action, target, ip, user_agent, "
+                "request_id, method, path, response_status, response_time_ms, "
+                "request_body, response_body, timestamp "
+                "FROM audit_log WHERE timestamp < ?",
+                (cutoff_iso,),
+            ).fetchall()
+            if not rows:
+                return 0
+            archived_at = _utcnow()
+            for r in rows:
+                req_body = r[12]
+                res_body = r[13]
+                if zstd is not None:
+                    try:
+                        cctx = zstd.ZstdCompressor()
+                        if req_body is not None:
+                            req_body = cctx.compress(req_body.encode("utf-8")).decode("ascii")
+                        if res_body is not None:
+                            res_body = cctx.compress(res_body.encode("utf-8")).decode("ascii")
+                    except Exception:
+                        pass
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO audit_log_archive("
+                    "id, tenant_id, user_id, action, target, ip, user_agent, "
+                    "request_id, method, path, response_status, response_time_ms, "
+                    "request_body, response_body, timestamp, archived_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8],
+                     r[9], r[10], r[11], req_body, res_body, r[14], archived_at),
+                )
+            # Now drop the originals. The DELETE trigger RAISE(ABORT)... but
+            # the archive_audit_before path is the one allowed escape hatch
+            # so we disable the trigger for this statement. Pragmatic, not
+            # pure; the alternative is to use a separate audit_log_active
+            # view, but the v1 simplicity wins.
+            try:
+                self._conn.execute("DROP TRIGGER IF EXISTS audit_log_no_delete")
+                cur = self._conn.execute(
+                    "DELETE FROM audit_log WHERE timestamp < ?",
+                    (cutoff_iso,),
+                )
+                deleted = cur.rowcount
+                # Recreate the trigger for normal operation.
+                self._conn.execute(
+                    "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete "
+                    "BEFORE DELETE ON audit_log "
+                    "BEGIN SELECT RAISE(ABORT, 'audit_log is append-only; "
+                    "use audit_log_archive instead'); END"
+                )
+            except Exception as e:
+                # Make sure the trigger comes back even if something failed.
+                self._conn.execute(
+                    "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete "
+                    "BEFORE DELETE ON audit_log "
+                    "BEGIN SELECT RAISE(ABORT, 'audit_log is append-only; "
+                    "use audit_log_archive instead'); END"
+                )
+                raise
+            return int(deleted)
+
+    # ─────────────────────────── campaign handoffs (#17) ───────────────────
+
+    def record_campaign_handoff(
+        self,
+        tenant_id: str,
+        campaign_id: str,
+        mode: str,
+        *,
+        contact_id: Optional[str] = None,
+        call_id: Optional[str] = None,
+        human_agent_id: Optional[str] = None,
+    ) -> dict:
+        hid = _new_id("ho")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO campaign_handoffs("
+                "id, tenant_id, campaign_id, contact_id, call_id, mode, "
+                "human_agent_id, transferred_at"
+                ") VALUES (?,?,?,?,?,?,?,?)",
+                (hid, tenant_id, campaign_id, contact_id, call_id, mode,
+                 human_agent_id, _utcnow()),
+            )
+        return {"id": hid, "tenant_id": tenant_id, "campaign_id": campaign_id,
+                "contact_id": contact_id, "call_id": call_id, "mode": mode,
+                "human_agent_id": human_agent_id}
+
+    def list_campaign_handoffs(
+        self, tenant_id: str, campaign_id: str
+    ) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM campaign_handoffs "
+            "WHERE tenant_id = ? AND campaign_id = ? ORDER BY transferred_at DESC",
+            (tenant_id, campaign_id),
+        )
 
 
 # ---------------------------------------------------------------------------

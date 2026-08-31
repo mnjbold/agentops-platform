@@ -150,10 +150,14 @@ function simulateProgress(root) {
     const queued = _state.items.find(i => i.status === 'queued');
     if (queued && inFlight < _state.throttle) {
       queued.status = 'dialing';
+      queued.ai_mode = 'ai';   // AI is greeting while the dial connects
       refreshRow(root, queued);
       setTimeout(() => {
         const r = Math.random();
         queued.status = r < 0.6 ? 'connected' : r < 0.75 ? 'voicemail' : r < 0.9 ? 'no-answer' : 'failed';
+        // After connection the human takes over (whisper mode).
+        queued.ai_mode = queued.status === 'voicemail' ? 'voicemail' :
+                         queued.status === 'no-answer' ? 'ai' : 'human';
         refreshRow(root, queued);
         updateSummary(root);
       }, 800 + Math.random() * 1200);
@@ -204,7 +208,10 @@ function renderRow(it) {
       h('div', { class: 'rec-row-name' }, it.name || it.number),
       h('div', { class: 'rec-row-num mono' }, it.number)
     ),
-    h('div', {}, createBadge({ variant: STATUS_VARIANT[it.status] || 'neutral', dot: true, children: it.status })),
+    h('div', {},
+      createBadge({ variant: STATUS_VARIANT[it.status] || 'neutral', dot: true, children: it.status })),
+    h('div', {},
+      createBadge({ variant: AI_VARIANT[it.ai_mode] || 'neutral', children: it.ai_mode || '—' })),
     h('div', {},
       h('button', {
         type: 'button', class: 'btn btn-ghost btn-sm', onClick: () => retry(it),
@@ -212,6 +219,14 @@ function renderRow(it) {
     )
   );
 }
+
+const AI_VARIANT = {
+  ai:        'accent',
+  human:     'info',
+  muted:     'warning',
+  transfer:  'warning',
+  voicemail: 'neutral',
+};
 
 function refreshRow(root, it) {
   const old = document.getElementById(`pd-row-${it.id}`);

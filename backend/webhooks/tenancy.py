@@ -305,6 +305,14 @@ def get_fernet() -> Fernet:
 def get_current_tenant(request) -> TenantContext:
     """FastAPI dependency: return the auth-resolved TenantContext.
 
+    The ``request`` parameter is intentionally un-typed: FastAPI
+    introspects signature annotations to build the OpenAPI schema, and
+    a ``Request`` annotation collides with the dependency's special
+    handling in some FastAPI versions (causes a Pydantic forward-ref
+    error during ``/openapi.json`` generation). Endpoints that need the
+    raw ``Request`` should declare it explicitly as ``request: Request``
+    in their own signature.
+
     Raises 401 if the middleware didn't populate one (shouldn't happen on
     ``/api/*`` since the middleware short-circuits, but keeps the
     contract honest for endpoints called from tests / other routers).

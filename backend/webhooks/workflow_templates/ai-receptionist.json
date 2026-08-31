@@ -1,0 +1,35 @@
+{
+  "name": "AI receptionist",
+  "description": "Greeting + handoff to a Telnyx AI Assistant. Optional menu for transfer to a human.",
+  "entry_node_id": "greet",
+  "nodes": [
+    {
+      "id": "greet",
+      "type": "greeting",
+      "label": "Greeting",
+      "x": 80,
+      "y": 80,
+      "params": { "text": "Hi, you've reached the AI assistant. How can I help you today?", "voice": "Telnyx.KokoroTTS.af_heart" }
+    },
+    {
+      "id": "to_ai",
+      "type": "ai_assistant",
+      "label": "AI assistant",
+      "x": 320,
+      "y": 80,
+      "params": { "assistant_id": null, "tools": ["transfer_to_number", "hangup", "send_sms"] }
+    },
+    {
+      "id": "transfer_human",
+      "type": "forward",
+      "label": "Transfer to human",
+      "x": 600,
+      "y": 80,
+      "params": { "to": "+15125550199", "from": "+15078731084" }
+    }
+  ],
+  "edges": [
+    { "from": "greet", "to": "to_ai" },
+    { "from": "to_ai", "to": "transfer_human", "condition": "transfer_requested" }
+  ]
+}

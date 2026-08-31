@@ -31,6 +31,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402  (used by /v1/openapi.json)
 
 from telnyx_mcp.clients.telnyx_client import get_client  # noqa: E402
 from webhooks.handlers.base import WebhookContext  # noqa: E402
@@ -58,6 +59,22 @@ from webhooks.storage import get_store  # noqa: E402
 from webhooks.admin_api import router as admin_router  # noqa: E402
 from webhooks.auth_api import router as auth_router, create_initial_user  # noqa: E402
 from webhooks.voicemail_api import router as voicemail_router  # noqa: E402
+from webhooks.workflow_engine import router as workflow_router  # noqa: E402
+from webhooks.numbers import router as numbers_router  # noqa: E402
+from webhooks.campaigns_extra import router as campaigns_extra_router  # noqa: E402
+from agent_sdk.assistants import router as assistants_router  # noqa: E402
+# Phase B business surface (issues #16, #19, #20, #21). The other Phase B
+# worker owns #13/14/15/17/18 — we only mount /v1/* routers that don't
+# touch their tables/handlers.
+from webhooks.analytics import router as analytics_router  # noqa: E402
+from webhooks.billing import router as billing_router  # noqa: E402
+from webhooks.audit import router as audit_router  # noqa: E402
+from webhooks.openapi_custom import (  # noqa: E402
+    branded_swagger_html,
+    build_postman_collection,
+    build_public_spec,
+)
+from audit.middleware import audit_middleware  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +152,11 @@ _JWT_EXEMPT_PREFIXES = (
     "/webhooks/telnyx",   # signed separately by WEBHOOK_HMAC_SECRET
     "/admin/test_event",  # signed separately
     "/health",
+    # Phase B business surface — the docs/Postman/audit export routes
+    # are public; the data routes live under /v1/* and are auth-gated
+    # by the same middleware.
+    "/v1/docs",
+    "/v1/openapi.json",
 )
 
 
@@ -377,6 +399,11 @@ async def _require_signed_body(request: Request) -> bytes:
 # Mount the dispatcher + specialist-switch webhook routes
 app.include_router(dispatch_router)
 
+# Mount the Phase B telephony surface FIRST so the new /api/numbers
+# endpoints (#15) take precedence over the legacy /api/numbers in
+# dashboard_api.py. FastAPI matches routes in registration order.
+app.include_router(numbers_router)
+
 # Mount the dashboard REST API
 app.include_router(dashboard_router)
 
@@ -385,6 +412,47 @@ app.include_router(dashboard_router)
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(voicemail_router)
+
+# Mount the Phase B routers: workflows (#13),
+# campaigns extras (#17 + #18), and AI assistants (#14).
+app.include_router(workflow_router)
+app.include_router(campaigns_extra_router)
+app.include_router(assistants_router)
+
+# Phase B business surface (#16, #19, #20). Mounted at /v1/* so the
+# public docs can advertise a stable v1 contract.
+app.include_router(analytics_router)
+app.include_router(billing_router)
+app.include_router(audit_router)
+
+
+# ──────────────────── audit middleware (#20) ──────────────────────────────
+# Append a row to audit_log for every /api/* (and /v1/*) request AFTER
+# the response is sent. The middleware does not block the response; if
+# the append fails we log a warning and move on.
+@app.middleware("http")
+async def _audit_mw(request: Request, call_next):
+    return await audit_middleware(request, call_next)
+
+
+# ──────────────────── public OpenAPI (#21) ───────────────────────────────
+# /v1/docs and /v1/openapi.json are the public docs. Internal /api/admin/*
+# is hidden from the spec; everything else under /v1/* + /api/* (minus
+# admin) is shown. Postman collection is at /v1/docs/postman.json.
+@app.get("/v1/openapi.json", include_in_schema=False)
+def v1_openapi_json() -> JSONResponse:
+    spec = build_public_spec(app)
+    return JSONResponse(spec)
+
+
+@app.get("/v1/docs", include_in_schema=False)
+def v1_docs():
+    return branded_swagger_html(openapi_url="/v1/openapi.json", title="agentops API v1")
+
+
+@app.get("/v1/docs/postman.json", include_in_schema=False)
+def v1_postman() -> JSONResponse:
+    return JSONResponse(build_postman_collection(app))
 
 # Load the specialist assistant_id map (so connect_specialist knows what to switch to)
 def load_specialist_mapping(path: Path = _PROJECT_ROOT / "agents" / "specialists" / "assistants.json") -> None:
