@@ -59,6 +59,7 @@ let _state = {
   countdown: 30,
   countdownTimer: null,
   callTimer: null,      // ticker that bumps _state.currentCall.duration
+  supervisorPoll: null, // Issue #42/#43: 2s poll for active supervisor sessions
   // Issue #40: skill groups (loaded from /api/skills) and the chip the
   // user picked to filter the queue. ``activeSkillFilter === null``
   // means "all skills".
@@ -452,6 +453,12 @@ function renderActiveCall(call) {
   // and starts a 1s ticker so the duration stays accurate without
   // relying on a Telnyx event round-trip.
   startCallTimer();
+  // Issue #42/#43: 2s poll for active supervisor sessions so the
+  // 🎧/🎙 badge appears within ~2s of the supervisor joining.
+  startSupervisorPoll(call);
+  // Issue #42/#43: badge area now also shows supervisor presence.
+  // 🎧 for whisper (agent can hear the supervisor), 🎙 for barge
+  // (3-way). Polled every 2s by startSupervisorPoll() below.
   const card = h('div', { class: 'card', style: 'height: 100%;' },
     h('div', { class: 'card-head', style: 'display:flex; align-items:center; justify-content: space-between;' },
       h('div', {},
@@ -459,7 +466,10 @@ function renderActiveCall(call) {
         h('p', { class: 'sub', style: 'margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-fg-3);' },
           call.from_number || ''),
       ),
-      createBadge({ variant: 'accent', dot: true, children: 'On call' }),
+      h('div', { style: 'display:flex; gap: 6px; align-items: center;' },
+        createBadge({ variant: 'accent', dot: true, children: 'On call' }),
+        h('span', { id: 'agent-supervisor-badge', style: 'display:none;' }),
+      ),
     ),
     h('div', { class: 'card-body', style: 'display:flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-6);' },
       createAvatar({ name: call.from_name || call.from_number, size: 96 }),
@@ -538,6 +548,64 @@ function stopCallTimer() {
   if (_state.callTimer) {
     clearInterval(_state.callTimer);
     _state.callTimer = null;
+  }
+  // Issue #42/#43: also stop the supervisor poll — no active call,
+  // no need to keep asking the backend who's listening.
+  if (_state.supervisorPoll) {
+    clearInterval(_state.supervisorPoll);
+    _state.supervisorPoll = null;
+  }
+  const badge = document.getElementById('agent-supervisor-badge');
+  if (badge) badge.style.display = 'none';
+}
+
+// Issue #42/#43: poll /api/calls/{call_id}/supervisor every 2s while
+// the agent is on a call so the dashboard can show a 🎧 (whisper) or
+// 🎙 (barge) badge. The call only has 2s of latency before the
+// supervisor's presence is visible — short enough to be useful and
+// long enough to be polite to the backend.
+function startSupervisorPoll(call) {
+  if (_state.supervisorPoll) clearInterval(_state.supervisorPoll);
+  if (!call || !call.call_id) return;
+  let lastSig = '';
+  const tick = async () => {
+    try {
+      const res = await api.get('/calls/' + encodeURIComponent(call.call_id) + '/supervisor');
+      const sessions = (res && res.sessions) || [];
+      const open = sessions.filter(s => !s.left_at);
+      const sig = open.map(s => s.mode).sort().join('|');
+      if (sig === lastSig) return;
+      lastSig = sig;
+      renderSupervisorBadge(open);
+    } catch (e) { /* best-effort; don't toast */ }
+  };
+  tick();
+  _state.supervisorPoll = setInterval(tick, 2000);
+}
+
+function renderSupervisorBadge(openSessions) {
+  const el = document.getElementById('agent-supervisor-badge');
+  if (!el) return;
+  if (!openSessions.length) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  // Barge is the most prominent — wins over whisper. Monitor doesn't
+  // surface a badge on the agent's side (the agent doesn't know).
+  const hasBarge = openSessions.some(s => s.mode === 'barge');
+  const hasWhisper = openSessions.some(s => s.mode === 'whisper');
+  if (hasBarge) {
+    el.style.display = 'inline-flex';
+    el.style.cssText = 'display:inline-flex; align-items:center; gap:4px; padding: 4px 10px; border-radius: 999px; background: var(--color-danger-bg, #b22); color: white; font-size: var(--text-sm); font-weight: 600;';
+    el.textContent = '🎙 Supervisor joined';
+  } else if (hasWhisper) {
+    el.style.display = 'inline-flex';
+    el.style.cssText = 'display:inline-flex; align-items:center; gap:4px; padding: 4px 10px; border-radius: 999px; background: var(--color-accent-bg, #48a); color: white; font-size: var(--text-sm); font-weight: 600;';
+    el.textContent = '🎧 Supervisor coaching';
+  } else {
+    el.style.display = 'none';
+    el.textContent = '';
   }
 }
 
@@ -728,6 +796,9 @@ async function acceptCall(call) {
     call.duration = 0;
     _state.currentCall = call;
     renderCenter();
+    // Issue #42/#43: poll the supervisor session list every 2s so
+    // the 🎧/🎙 badge shows up in real time.
+    startSupervisorPoll(call);
     // mark presence on_call
     try { await api.put('/agents/me/presence', { status: 'on_call', current_call_id: call.call_id }); } catch (e) { /* ignore */ }
     _state.status = 'on_call';
