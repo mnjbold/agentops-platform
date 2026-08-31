@@ -1,0 +1,58 @@
+{
+  "name": "After-hours",
+  "description": "Outside business hours: greeting + voicemail drop. Inside hours: forward to a human.",
+  "entry_node_id": "check_hours",
+  "nodes": [
+    {
+      "id": "check_hours",
+      "type": "conditional",
+      "label": "Business hours?",
+      "x": 80,
+      "y": 80,
+      "params": {
+        "condition": "time_of_day",
+        "tz": "America/Chicago",
+        "open": "08:00",
+        "close": "18:00"
+      }
+    },
+    {
+      "id": "after_greet",
+      "type": "greeting",
+      "label": "After-hours greeting",
+      "x": 320,
+      "y": -40,
+      "params": { "text": "You've reached Acme Corp after hours. Please leave a message and we'll get back to you on the next business day.", "voice": "Telnyx.KokoroTTS.af_heart" }
+    },
+    {
+      "id": "to_vm",
+      "type": "voicemail",
+      "label": "Voicemail",
+      "x": 600,
+      "y": -40,
+      "params": { "max_length_secs": 90, "transcribe": true }
+    },
+    {
+      "id": "day_greet",
+      "type": "greeting",
+      "label": "Business-hours greeting",
+      "x": 320,
+      "y": 80,
+      "params": { "text": "Thanks for calling Acme Corp, please hold while we connect you.", "voice": "Telnyx.KokoroTTS.af_heart" }
+    },
+    {
+      "id": "to_human",
+      "type": "forward",
+      "label": "Forward to human",
+      "x": 600,
+      "y": 80,
+      "params": { "to": "+15125550199", "from": "+15078731084" }
+    }
+  ],
+  "edges": [
+    { "from": "check_hours", "to": "after_greet", "branch": "false" },
+    { "from": "check_hours", "to": "day_greet",   "branch": "true" },
+    { "from": "after_greet", "to": "to_vm" },
+    { "from": "day_greet",   "to": "to_human" }
+  ]
+}

@@ -37,4 +37,5 @@ appwrite==14.1.0
 
 # tests
 pytest==9.1.1   # Phase A #2-#9 test suite
+python-multipart==0.0.32  # Phase B: voicemail audio upload (#18)
 

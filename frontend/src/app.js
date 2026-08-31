@@ -22,7 +22,15 @@ import { mountVoicemailScreen }   from './screens/voicemail.js';
 import { mountRecordingsScreen }  from './screens/recordings.js';
 import { mountPowerDialerScreen } from './screens/power-dialer.js';
 import { mountTenantsScreen }     from './screens/tenants.js';
+import { mountAnalyticsScreen }   from './screens/analytics.js';
+import { mountBillingScreen }     from './screens/billing.js';
+import { mountAuditScreen }       from './screens/audit.js';
 import { mountStubScreen }        from './screens/stub.js';
+import { mountWorkflowsScreen }   from './screens/workflows.js';
+import { mountAssistantsScreen }  from './screens/assistants.js';
+import { mountVoiceLabScreen }    from './screens/voice-lab.js';
+import { mountAgentTestScreen }   from './screens/agent-test.js';
+import { mountNumbersScreen }     from './screens/numbers.js';
 
 const themeStore = persistedStore('agentops.theme', { theme: 'dark' });
 
@@ -71,6 +79,19 @@ function buildSidebar() {
         { id: 'tenants',  href: '#/tenants',  label: 'Tenants',  icon: '⌘' },
         { id: 'settings', href: '#/settings', label: 'Settings', icon: '⚙' },
         { id: 'agents',   href: '#/agents',   label: 'Agents',   icon: '✦' },
+        { id: 'assistants', href: '#/assistants', label: 'AI Assistants', icon: '✦' },
+        { id: 'voice-lab',  href: '#/voice-lab',  label: 'Voice Lab',    icon: '♪' },
+        { id: 'analytics',  href: '#/analytics',  label: 'Analytics',  icon: '∑' },
+        { id: 'billing',    href: '#/billing',    label: 'Billing',    icon: '$' },
+        { id: 'audit',      href: '#/audit',      label: 'Audit log',  icon: '✓' },
+      ],
+    },
+    {
+      heading: 'Telephony',
+      items: [
+        { id: 'workflows', href: '#/workflows', label: 'Workflows', icon: '◇' },
+        { id: 'numbers',   href: '#/numbers',   label: 'Numbers',   icon: '#' },
+        { id: 'agent-test',href: '#/agent-test',label: 'Test agent',icon: '☎' },
       ],
     },
   ];
@@ -146,6 +167,14 @@ const routes = {
   '/tenants':      () => mountTenantsScreen(main),
   '/settings':     () => mountStubScreen(main, { title: 'Settings', sub: 'Theme, account, integrations', legacyTab: 'admin' }),
   '/agents':       () => mountStubScreen(main, { title: 'Agents', sub: 'AI agent fleet', legacyTab: 'agents' }),
+  '/workflows':    () => mountWorkflowsScreen(main),
+  '/assistants':   () => mountAssistantsScreen(main),
+  '/voice-lab':    () => mountVoiceLabScreen(main),
+  '/agent-test':   () => mountAgentTestScreen(main),
+  '/numbers':      () => mountNumbersScreen(main),
+  '/analytics':    () => mountAnalyticsScreen(main),
+  '/billing':      () => mountBillingScreen(main),
+  '/audit':        () => mountAuditScreen(main),
   '/login':        () => mountLoginScreen(main),
   '/signup':       () => mountLoginScreen(main),
   '/forgot':       () => mountLoginScreen(main),
@@ -156,7 +185,7 @@ const routes = {
 };
 
 // Auth-gated routes
-const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents'];
+const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents', '/workflows', '/assistants', '/voice-lab', '/agent-test', '/numbers'];
 const router = createRouter(routes, {
   onChange: ({ path }) => {
     // mark active link

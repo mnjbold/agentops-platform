@@ -92,6 +92,33 @@ const DEMO = {
     { number: '+13075550100', label: 'AI-routed (Sales)' },
     { number: '+13205550100', label: 'AI-routed (Support)' },
   ]),
+  '/workflows': () => [
+    { id: 'wf_basic', name: 'Basic IVR', version: 3, graph: { nodes: [{id: 'g', type: 'greeting'}], edges: [] } },
+    { id: 'wf_after', name: 'After-hours', version: 1, graph: { nodes: [], edges: [] } },
+  ],
+  '/workflows/templates': () => ({ templates: [
+    { id: 'basic-ivr',        name: 'Basic IVR',         description: '3-option menu + forwards', node_count: 6 },
+    { id: 'after-hours',      name: 'After-hours',       description: 'Time-of-day branch',      node_count: 5 },
+    { id: 'queue',            name: 'Queue',             description: 'Hold + forward to agent',node_count: 4 },
+    { id: 'ai-receptionist',  name: 'AI receptionist',   description: 'Greeting + AI assistant', node_count: 3 },
+  ] }),
+  '/assistants': () => ({ assistants: [
+    { id: 'ast_sales',  name: 'Sales bot',  voice: 'Telnyx.KokoroTTS.af_heart', tool_ids: ['transfer_to_number','hangup'], telnyx_id: 'ast_sales' },
+    { id: 'ast_supp',   name: 'Support bot', voice: 'AWS.Polly.Matthew',         tool_ids: ['send_sms'],                telnyx_id: 'ast_supp' },
+  ], available_tools: [
+    { id: 'transfer_to_number', label: 'Transfer to a number', description: 'Hand the call to a human.' },
+    { id: 'hangup',             label: 'Hang up',              description: 'End the call from the assistant.' },
+    { id: 'send_sms',           label: 'Send SMS',             description: 'Send a follow-up SMS.' },
+    { id: 'book_appointment',   label: 'Book appointment',     description: 'Stub: create a calendar entry.' },
+  ] }),
+  '/voice-lab/voices': () => ({ voices: [
+    { id: 'Telnyx.KokoroTTS.af_heart',  name: 'Heart (warm female)',     provider: 'Telnyx' },
+    { id: 'Telnyx.KokoroTTS.am_adam',   name: 'Adam (calm male)',        provider: 'Telnyx' },
+    { id: 'Telnyx.KokoroTTS.bf_emma',   name: 'Emma (British female)',   provider: 'Telnyx' },
+    { id: 'AWS.Polly.Joanna',           name: 'Joanna (AWS Polly)',      provider: 'AWS' },
+    { id: 'AWS.Polly.Matthew',          name: 'Matthew (AWS Polly)',     provider: 'AWS' },
+    { id: 'Azure.en-US-JennyNeural',    name: 'Jenny (Azure Neural)',    provider: 'Azure' },
+  ] }),
 };
 
 function demoFor(path) {

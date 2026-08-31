@@ -1,0 +1,44 @@
+{
+  "name": "Queue",
+  "description": "Plays a hold message, then forwards the call to the first available agent.",
+  "entry_node_id": "greet",
+  "nodes": [
+    {
+      "id": "greet",
+      "type": "greeting",
+      "label": "Greeting",
+      "x": 80,
+      "y": 80,
+      "params": { "text": "All of our agents are currently busy. Please hold and we will be with you shortly.", "voice": "Telnyx.KokoroTTS.af_heart" }
+    },
+    {
+      "id": "hold",
+      "type": "greeting",
+      "label": "Hold music (TTS placeholder)",
+      "x": 320,
+      "y": 80,
+      "params": { "text": "Thank you for holding. Your call is important to us.", "voice": "Telnyx.KokoroTTS.af_heart", "loop": true }
+    },
+    {
+      "id": "to_agent",
+      "type": "forward_agent",
+      "label": "Forward to next agent",
+      "x": 600,
+      "y": 80,
+      "params": { "timeout_secs": 30, "skill": "sales" }
+    },
+    {
+      "id": "fallback_vm",
+      "type": "voicemail",
+      "label": "Fallback voicemail",
+      "x": 600,
+      "y": 200,
+      "params": { "max_length_secs": 60, "transcribe": true }
+    }
+  ],
+  "edges": [
+    { "from": "greet", "to": "hold" },
+    { "from": "hold", "to": "to_agent" },
+    { "from": "hold", "to": "fallback_vm", "condition": "no_agent" }
+  ]
+}

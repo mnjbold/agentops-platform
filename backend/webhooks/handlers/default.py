@@ -199,6 +199,22 @@ class DefaultEventHandler(BaseEventHandler):
         from_ = _extract_phone(ctx.payload.get("from"))
         log.info("Incoming call to %s from %s (cci=%s)", called, from_, ctx.call_control_id)
         self._log_event(ctx, notes="incoming")
+        # Phase B: if the called number has a workflow assigned, walk
+        # the graph. Best-effort — never let this break the webhook.
+        if called:
+            try:
+                from webhooks.workflow_engine import run_workflow_for_call
+                result = run_workflow_for_call(
+                    tenant_id="default", called=called,
+                    call_id=ctx.call_control_id or "", from_=from_)
+                if result is not None:
+                    self._log_event(
+                        ctx,
+                        notes=f"workflow_walked:{len(result.get('history', []))} steps",
+                    )
+                    return f"workflow_walked:{len(result.get('history', []))}"
+            except Exception as e:
+                log.warning("run_workflow_for_call failed (non-fatal): %s", e)
         return "logged"
 
     def event_call_answered(self, ctx: WebhookContext) -> str:

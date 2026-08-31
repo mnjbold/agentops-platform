@@ -1,0 +1,67 @@
+{
+  "name": "Basic IVR",
+  "description": "Greeting, 3-option menu, and forwards to three different numbers.",
+  "entry_node_id": "greet",
+  "nodes": [
+    {
+      "id": "greet",
+      "type": "greeting",
+      "label": "Greeting",
+      "x": 80,
+      "y": 80,
+      "params": { "text": "Thanks for calling Acme Corp. Press 1 for sales, 2 for support, or 3 for the office.", "voice": "Telnyx.KokoroTTS.af_heart" }
+    },
+    {
+      "id": "menu",
+      "type": "menu",
+      "label": "Main menu",
+      "x": 320,
+      "y": 80,
+      "params": {
+        "prompt": "Press 1 for sales, 2 for support, or 3 for the office.",
+        "max_digits": 1,
+        "timeout_ms": 5000,
+        "options": { "1": "fwd_sales", "2": "fwd_support", "3": "fwd_office" }
+      }
+    },
+    {
+      "id": "fwd_sales",
+      "type": "forward",
+      "label": "Forward to Sales",
+      "x": 600,
+      "y": -40,
+      "params": { "to": "+15125550100", "from": "+15078731084" }
+    },
+    {
+      "id": "fwd_support",
+      "type": "forward",
+      "label": "Forward to Support",
+      "x": 600,
+      "y": 80,
+      "params": { "to": "+15125550101", "from": "+15078731084" }
+    },
+    {
+      "id": "fwd_office",
+      "type": "forward",
+      "label": "Forward to Office",
+      "x": 600,
+      "y": 200,
+      "params": { "to": "+15125550102", "from": "+15078731084" }
+    },
+    {
+      "id": "fallback",
+      "type": "hangup",
+      "label": "Hangup (no input)",
+      "x": 320,
+      "y": 240,
+      "params": {}
+    }
+  ],
+  "edges": [
+    { "from": "greet", "to": "menu" },
+    { "from": "menu", "to": "fwd_sales" },
+    { "from": "menu", "to": "fwd_support" },
+    { "from": "menu", "to": "fwd_office" },
+    { "from": "menu", "to": "fallback", "condition": "no_input" }
+  ]
+}
