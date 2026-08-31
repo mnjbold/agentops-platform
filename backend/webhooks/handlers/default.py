@@ -299,6 +299,31 @@ class DefaultEventHandler(BaseEventHandler):
             return f"dispatch_error:{e}"
 
     def event_call_hangup(self, ctx: WebhookContext) -> str:
+        # Phase E-A (#32): if the call was in the queue, flip it to
+        # 'abandoned' (status='queued') or 'answered' (status='assigned').
+        # Best-effort — never let the queue error break the webhook.
+        try:
+            from webhooks.storage import get_store
+            store = get_store()
+            cci = ctx.call_control_id or ""
+            if cci:
+                row = store.get_queue_position("default", cci)
+                if row:
+                    store.mark_abandoned("default", cci)
+                    log.info("queue: %s marked abandoned on hangup", cci)
+                else:
+                    # Not currently queued — but it might be 'assigned'.
+                    # mark_abandoned handles the 'assigned' case too, so
+                    # just try.
+                    row2 = store.mark_abandoned("default", cci)
+                    if row2 and row2.get("status") == "abandoned":
+                        # Was assigned; the agent actually answered and
+                        # then hung up. Re-classify as 'answered' so the
+                        # stats tile counts it.
+                        store.mark_answered("default", cci)
+                        log.info("queue: %s reclassified answered on hangup", cci)
+        except Exception as e:
+            log.debug("queue hookup on hangup failed (non-fatal): %s", e)
         self._log_event(ctx, notes="hangup")
         return "logged"
 

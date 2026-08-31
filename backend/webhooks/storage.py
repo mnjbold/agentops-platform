@@ -3474,14 +3474,21 @@ class Store:
         )
 
     def mark_answered(self, tenant_id: str, call_id: str) -> Optional[dict]:
-        """Flip the call's queue row to 'answered'."""
+        """Flip the call's queue row to 'answered'.
+
+        Idempotent: also re-classifies a row that's in 'abandoned'
+        (the webhook path may have flipped it to abandoned before
+        re-classifying as answered because the agent actually picked
+        up). The 'answered' state is the truth-of-record for the
+        stats tile.
+        """
         now = _utcnow()
         with self._lock:
             self._conn.execute(
                 "UPDATE call_queue SET status = 'answered', "
                 "dequeued_at = COALESCE(dequeued_at, ?) "
                 "WHERE tenant_id = ? AND call_id = ? "
-                "      AND status = 'assigned'",
+                "      AND status IN ('assigned', 'abandoned')",
                 (now, tenant_id, call_id),
             )
         return self._row(
