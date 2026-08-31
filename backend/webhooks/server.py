@@ -552,7 +552,10 @@ def _migrate_legacy_env_to_secrets() -> None:
             # for the default tenant yet).
             if not store.get_user("default", f"admin@default.local"):
                 import secrets as _s
-                pwd = _s.token_urlsafe(18)
+                # Dev-mode: honor a known password so the dev script can
+                # print credentials the user can actually type. In prod,
+                # leave the env unset and a random password is generated.
+                pwd = os.environ.get("BACKEND_DEV_PASSWORD") or _s.token_urlsafe(18)
                 create_initial_user(
                     tenant_id="default",
                     email="admin@default.local",
