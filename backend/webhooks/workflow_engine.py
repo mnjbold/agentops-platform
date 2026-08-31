@@ -278,7 +278,7 @@ class WorkflowEngine:
                         json={
                             "payload": text,
                             "voice": (node.get("params") or {}).get(
-                                "voice", "Telnyx.KokoroTTS.af_heart"),
+                                "voice", "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc"),
                             "language": "en-US",
                             "command_id": f"speak_{node['id']}",
                         },

@@ -20,7 +20,7 @@ def telnyx_create_assistant(
     name: str,
     instructions: str,
     model: str = "openai/gpt-4o",
-    voice: str = "Telnyx.KokoroTTS.af_heart",
+    voice: str = "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc",
     transcription_engine: str = "deepgram/nova-3",
     tools: list[dict] | None = None,
 ) -> dict:

@@ -26,14 +26,18 @@ log = logging.getLogger(__name__)
 # can render a picker without a live call. Operators can extend via the
 # ``W3J_EXTRA_VOICES`` env var (comma-separated ``provider.voice``).
 DEFAULT_VOICES: list[dict] = [
-    {"id": "Telnyx.KokoroTTS.af_heart",  "provider": "Telnyx",   "name": "Heart (warm female)",        "gender": "female", "language": "en-US"},
-    {"id": "Telnyx.KokoroTTS.am_adam",   "provider": "Telnyx",   "name": "Adam (calm male)",           "gender": "male",   "language": "en-US"},
-    {"id": "Telnyx.KokoroTTS.bf_emma",   "provider": "Telnyx",   "name": "Emma (British female)",      "gender": "female", "language": "en-GB"},
-    {"id": "AWS.Polly.Joanna",           "provider": "AWS",      "name": "Joanna (AWS Polly)",         "gender": "female", "language": "en-US"},
-    {"id": "AWS.Polly.Matthew",          "provider": "AWS",      "name": "Matthew (AWS Polly)",        "gender": "male",   "language": "en-US"},
-    {"id": "Azure.en-US-JennyNeural",    "provider": "Azure",    "name": "Jenny (Azure Neural)",       "gender": "female", "language": "en-US"},
-    {"id": "Azure.en-US-GuyNeural",      "provider": "Azure",    "name": "Guy (Azure Neural)",         "gender": "male",   "language": "en-US"},
-    {"id": "ElevenLabs.rachel",          "provider": "ElevenLabs","name": "Rachel (ElevenLabs)",       "gender": "female", "language": "en-US"},
+    # Telnyx Ultra voices first (highest quality — used by the live assistants).
+    # Each is a voice clone in the user's account; "Sam v2" is the canonical one.
+    {"id": "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc", "provider": "Telnyx", "name": "Sam (Ultra) · warm male",       "gender": "male",   "language": "en-US", "tier": "ultra", "default": True},
+    {"id": "Telnyx.Ultra.f6ff7c0c-e396-40a9-a70b-f7607edb6937", "provider": "Telnyx", "name": "Dispatch (Ultra) · confident",  "gender": "female", "language": "en-US", "tier": "ultra"},
+    {"id": "Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02", "provider": "Telnyx", "name": "Consult (Ultra) · professional", "gender": "female", "language": "en-US", "tier": "ultra"},
+    {"id": "Telnyx.Ultra.911b8b22-887f-4caf-bf87-85d834c08708", "provider": "Telnyx", "name": "QA (Ultra) · bright",           "gender": "female", "language": "en-US", "tier": "ultra"},
+    {"id": "Telnyx.Ultra.a7a59115-2425-4192-844c-1e98ec7d6877", "provider": "Telnyx", "name": "Router (Ultra) · warm",          "gender": "female", "language": "en-US", "tier": "ultra"},
+    {"id": "Telnyx.Ultra.8a1b8af0-c4f6-423f-a268-5507fd4aefdf", "provider": "Telnyx", "name": "Scheduler (Ultra) · friendly",   "gender": "female", "language": "en-US", "tier": "ultra"},
+    # Kokoro TTS — lightweight, robotic, kept for tests like "J.A.R.V.I.S."
+    {"id": "Telnyx.KokoroTTS.af_heart",  "provider": "Telnyx",   "name": "Heart (warm female) · Kokoro",   "gender": "female", "language": "en-US", "tier": "kokoro"},
+    {"id": "Telnyx.KokoroTTS.am_adam",   "provider": "Telnyx",   "name": "Adam (calm male) · Kokoro",     "gender": "male",   "language": "en-US", "tier": "kokoro"},
+    {"id": "Telnyx.KokoroTTS.bf_emma",   "provider": "Telnyx",   "name": "Emma (British female) · Kokoro","gender": "female", "language": "en-GB", "tier": "kokoro"},
 ]
 
 
@@ -57,7 +61,7 @@ def get_telnyx_api_key() -> Optional[str]:
 
 def tts_preview(
     text: str,
-    voice: str = "Telnyx.KokoroTTS.af_heart",
+    voice: str = "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc",
     *,
     model: str = "telnyx/tts-1",
     response_format: str = "mp3",

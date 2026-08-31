@@ -76,7 +76,7 @@ async def create_assistant(request: Request) -> dict:
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name is required")
-    voice = body.get("voice") or "Telnyx.KokoroTTS.af_heart"
+    voice = body.get("voice") or "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc"
     system_prompt = body.get("system_prompt") or ""
     greeting = body.get("greeting")
     model = body.get("model") or "openai/gpt-4o"
@@ -274,7 +274,7 @@ async def voice_lab_preview(request: Request) -> dict:
         raise HTTPException(400, "text is required")
     if len(text) > 500:
         raise HTTPException(400, "text must be 500 chars or less for previews")
-    voice = body.get("voice") or "Telnyx.KokoroTTS.af_heart"
+    voice = body.get("voice") or "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc"
     model = body.get("model") or "telnyx/tts-1"
     fmt = body.get("response_format") or "mp3"
     return sdk_client.tts_preview(text, voice=voice, model=model, response_format=fmt)

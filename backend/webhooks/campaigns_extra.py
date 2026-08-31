@@ -226,7 +226,7 @@ def _drop_voicemail(
             f"https://api.telnyx.com/v2/calls/{call_id}/actions/speak",
             json={
                 "payload": f"data:audio/mpeg;base64,{audio_b64}",
-                "voice": "Telnyx.KokoroTTS.af_heart",
+                "voice": "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc",
                 "language": "en-US",
                 "command_id": f"vmdrop_{campaign['id']}",
             },

@@ -599,7 +599,7 @@ async def api_voice_tts(request: Request) -> dict:
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "text is required")
-    voice = body.get("voice") or "Telnyx.KokoroTTS.af_heart"
+    voice = body.get("voice") or "Telnyx.Ultra.a5136bf9-224c-4d76-b823-52bd5efcffcc"
     model = body.get("model") or "telnyx/tts-1"
     response_format = body.get("response_format") or "mp3"
     try:
