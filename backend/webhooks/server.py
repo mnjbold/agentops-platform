@@ -467,6 +467,16 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("Phase E-B skills router not mounted: %s", _exc)
 
+# Phase E-B #41-#43 — supervisor monitor / whisper / barge. The
+# router exposes three POST endpoints (one per mode) plus a GET for
+# the call's participants list. The hangup hook in handlers/default
+# invokes end_for_call to close every open session when a call ends.
+try:
+    from webhooks.supervisor import router as supervisor_router
+    app.include_router(supervisor_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase E-B supervisor router not mounted: %s", _exc)
+
 # Phase D #26 + #27 — Meetings (Daily.co) + Email (provider-agnostic).
 try:
     from webhooks.meetings import router as meetings_router
