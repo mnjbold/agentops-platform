@@ -481,6 +481,123 @@ CREATE TABLE IF NOT EXISTS dnc_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_dnc_cache_phone ON dnc_cache(phone);
 CREATE INDEX IF NOT EXISTS idx_dnc_cache_expires ON dnc_cache(expires_at);
+
+-- #22 — WhatsApp templates and messages
+CREATE TABLE IF NOT EXISTS whatsapp_templates (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    telnyx_id   TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    language    TEXT NOT NULL DEFAULT 'en',
+    variables   TEXT NOT NULL DEFAULT '[]',
+    status      TEXT NOT NULL DEFAULT 'approved',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_wa_tpl_tenant ON whatsapp_templates(tenant_id);
+
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    direction   TEXT NOT NULL,
+    remote      TEXT NOT NULL,
+    from_number TEXT NOT NULL,
+    to_number   TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    telnyx_id   TEXT,
+    status      TEXT NOT NULL DEFAULT 'received',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_msg_tenant ON whatsapp_messages(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wa_msg_remote ON whatsapp_messages(tenant_id, remote);
+
+-- #23 — Suppression list and SMS replies
+CREATE TABLE IF NOT EXISTS suppression_list (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    phone       TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT 'manual',
+    source      TEXT NOT NULL DEFAULT 'manual',
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE (tenant_id, phone)
+);
+CREATE INDEX IF NOT EXISTS idx_supp_tenant ON suppression_list(tenant_id);
+
+CREATE TABLE IF NOT EXISTS sms_replies (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    campaign_id   TEXT,
+    contact_id    TEXT,
+    from_number   TEXT NOT NULL,
+    body          TEXT NOT NULL DEFAULT '',
+    received_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sms_reply_tenant ON sms_replies(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sms_reply_campaign ON sms_replies(tenant_id, campaign_id);
+
+-- #27 — Email templates and messages
+CREATE TABLE IF NOT EXISTS email_templates (
+    id                TEXT PRIMARY KEY,
+    tenant_id         TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    subject_template  TEXT NOT NULL,
+    body_template     TEXT NOT NULL,
+    variables         TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_email_tpl_tenant ON email_templates(tenant_id);
+
+CREATE TABLE IF NOT EXISTS email_messages (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL,
+    provider    TEXT NOT NULL DEFAULT 'dev',
+    direction   TEXT NOT NULL,
+    from_addr   TEXT NOT NULL,
+    to_addr     TEXT NOT NULL,
+    subject     TEXT NOT NULL DEFAULT '',
+    body        TEXT NOT NULL DEFAULT '',
+    html        TEXT,
+    status      TEXT NOT NULL DEFAULT 'queued',
+    error       TEXT,
+    sent_at     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_msg_tenant ON email_messages(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_email_msg_to ON email_messages(tenant_id, to_addr);
+
+-- #26 — Meetings
+CREATE TABLE IF NOT EXISTS meetings (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    host_user_id    TEXT,
+    title           TEXT NOT NULL DEFAULT '',
+    room_url        TEXT NOT NULL DEFAULT '',
+    room_name       TEXT NOT NULL DEFAULT '',
+    started_at      TEXT,
+    ended_at        TEXT,
+    recording_url   TEXT,
+    participants    TEXT NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'created',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meetings_tenant ON meetings(tenant_id);
+
+-- #28 — Network quality log
+CREATE TABLE IF NOT EXISTS network_quality_log (
+    id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    call_id         TEXT,
+    rtt_ms          REAL NOT NULL DEFAULT 0,
+    jitter_ms       REAL NOT NULL DEFAULT 0,
+    packet_loss_pct REAL NOT NULL DEFAULT 0,
+    score           REAL NOT NULL DEFAULT 0,
+    timestamp       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nq_tenant ON network_quality_log(tenant_id, timestamp);
 """
 
 
@@ -526,6 +643,7 @@ class Store:
             self._run_migrations()
             self._run_migrations_phase_b()
             self._run_migrations_phase_c()
+            self._run_migrations_phase_d()
             cur = self._conn.execute(
                 "SELECT id FROM tenants WHERE id = 'default'"
             )
@@ -647,6 +765,52 @@ class Store:
                 "ALTER TABLE campaigns ADD COLUMN time_window_end INTEGER NOT NULL DEFAULT 21"
             )
             log.info("Migrated campaigns.time_window_end")
+
+    def _run_migrations_phase_d(self) -> None:
+        """Phase D migrations for issues #26, #27, #28, #29, #30.
+
+        - ``phone_numbers.whatsapp_enabled`` (0/1) — used by the Numbers
+          tab UI to show a green WhatsApp badge.
+        - ``tenants.region`` ('us' or 'eu') — used by multi-region routing.
+        - ``tenants.region_lock`` (0/1) — when on, the tenant's data is
+          pinned to one region; no cross-region fallback.
+        - ``tenants.brand_json`` (TEXT) — JSON blob: logo, colors, custom
+          domain, support email. Used by the white-label login page.
+        - ``tenants.custom_domain`` (TEXT) — e.g. ``acme.agentops.com``.
+
+        All ALTERs are guarded by a PRAGMA check so the migration is
+        idempotent.
+        """
+        # phone_numbers.whatsapp_enabled
+        pn_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(phone_numbers)").fetchall()}
+        if "whatsapp_enabled" not in pn_cols:
+            self._conn.execute(
+                "ALTER TABLE phone_numbers ADD COLUMN whatsapp_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("Migrated phone_numbers.whatsapp_enabled")
+
+        # tenants.* Phase D columns
+        t_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(tenants)").fetchall()}
+        if "region" not in t_cols:
+            self._conn.execute(
+                "ALTER TABLE tenants ADD COLUMN region TEXT NOT NULL DEFAULT 'us'"
+            )
+            log.info("Migrated tenants.region")
+        if "region_lock" not in t_cols:
+            self._conn.execute(
+                "ALTER TABLE tenants ADD COLUMN region_lock INTEGER NOT NULL DEFAULT 0"
+            )
+            log.info("Migrated tenants.region_lock")
+        if "brand_json" not in t_cols:
+            self._conn.execute(
+                "ALTER TABLE tenants ADD COLUMN brand_json TEXT"
+            )
+            log.info("Migrated tenants.brand_json")
+        if "custom_domain" not in t_cols:
+            self._conn.execute(
+                "ALTER TABLE tenants ADD COLUMN custom_domain TEXT"
+            )
+            log.info("Migrated tenants.custom_domain")
 
     def close(self) -> None:
         with self._lock:
@@ -2268,6 +2432,600 @@ class Store:
             "SELECT * FROM campaign_handoffs "
             "WHERE tenant_id = ? AND campaign_id = ? ORDER BY transferred_at DESC",
             (tenant_id, campaign_id),
+        )
+    # ───────────────────── #22 WhatsApp ──────────────────────────────
+    def upsert_whatsapp_template(
+        self, tenant_id: str, telnyx_id: str, name: str,
+        language: str = "en", variables: Optional[list] = None,
+        status: str = "approved",
+    ) -> dict:
+        now = _utcnow()
+        variables = variables or []
+        existing = self._row(
+            "SELECT id FROM whatsapp_templates WHERE tenant_id = ? AND name = ?",
+            (tenant_id, name),
+        )
+        if existing:
+            self._exec(
+                "UPDATE whatsapp_templates SET telnyx_id=?, language=?, variables=?, "
+                "status=?, updated_at=? WHERE id=?",
+                (telnyx_id, language, json.dumps(variables), status, now, existing["id"]),
+            )
+            return self.get_whatsapp_template(tenant_id, existing["id"]) or {}
+        tid = _new_id("wapl")
+        self._exec(
+            "INSERT INTO whatsapp_templates(id, tenant_id, telnyx_id, name, language, "
+            "variables, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (tid, tenant_id, telnyx_id, name, language, json.dumps(variables),
+             status, now, now),
+        )
+        return self.get_whatsapp_template(tenant_id, tid) or {}
+
+    def get_whatsapp_template(self, tenant_id: str, template_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM whatsapp_templates WHERE tenant_id = ? AND id = ?",
+            (tenant_id, template_id),
+        )
+        if row and "variables" in row:
+            try:
+                row["variables"] = json.loads(row["variables"]) if row["variables"] else []
+            except (json.JSONDecodeError, TypeError):
+                row["variables"] = []
+        return row
+
+    def get_whatsapp_template_by_name(self, tenant_id: str, name: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM whatsapp_templates WHERE tenant_id = ? AND name = ?",
+            (tenant_id, name),
+        )
+        if row and "variables" in row:
+            try:
+                row["variables"] = json.loads(row["variables"]) if row["variables"] else []
+            except (json.JSONDecodeError, TypeError):
+                row["variables"] = []
+        return row
+
+    def list_whatsapp_templates(self, tenant_id: str) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM whatsapp_templates WHERE tenant_id = ? ORDER BY name",
+            (tenant_id,),
+        )
+        for r in rows:
+            try:
+                r["variables"] = json.loads(r["variables"]) if r["variables"] else []
+            except (json.JSONDecodeError, TypeError):
+                r["variables"] = []
+        return rows
+
+    def insert_whatsapp_message(
+        self, tenant_id: str, direction: str, remote: str,
+        from_number: str, to_number: str, body: str = "",
+        telnyx_id: Optional[str] = None, status: str = "received",
+    ) -> dict:
+        mid = _new_id("wamsg")
+        now = _utcnow()
+        self._exec(
+            "INSERT INTO whatsapp_messages(id, tenant_id, direction, remote, from_number, "
+            "to_number, body, telnyx_id, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (mid, tenant_id, direction, remote, from_number, to_number, body,
+             telnyx_id, status, now),
+        )
+        return {"id": mid, "tenant_id": tenant_id, "direction": direction,
+                "remote": remote, "from_number": from_number, "to_number": to_number,
+                "body": body, "telnyx_id": telnyx_id, "status": status, "created_at": now}
+
+    def list_whatsapp_threads(self, tenant_id: str) -> list[dict]:
+        return self._rows(
+            "SELECT remote, MAX(created_at) AS last_at, "
+            "  (SELECT body FROM whatsapp_messages w2 "
+            "   WHERE w2.tenant_id = ? AND w2.remote = m.remote "
+            "   ORDER BY w2.created_at DESC LIMIT 1) AS last_body "
+            "FROM whatsapp_messages m WHERE tenant_id = ? "
+            "GROUP BY remote ORDER BY last_at DESC",
+            (tenant_id, tenant_id),
+        )
+
+    # ───────────────────── #23 Suppression + SMS replies ────────────
+    def add_suppression(
+        self, tenant_id: str, phone: str, reason: str = "manual",
+        source: str = "manual", note: Optional[str] = None,
+    ) -> dict:
+        now = _utcnow()
+        sid = _new_id("supp")
+        try:
+            self._exec(
+                "INSERT INTO suppression_list(id, tenant_id, phone, reason, source, note, "
+                "created_at) VALUES (?,?,?,?,?,?,?)",
+                (sid, tenant_id, phone, reason, source, note, now),
+            )
+        except sqlite3.IntegrityError:
+            self._exec(
+                "UPDATE suppression_list SET reason=?, source=?, note=? "
+                "WHERE tenant_id=? AND phone=?",
+                (reason, source, note, tenant_id, phone),
+            )
+            row = self._row(
+                "SELECT * FROM suppression_list WHERE tenant_id = ? AND phone = ?",
+                (tenant_id, phone),
+            )
+            return row or {"id": sid, "tenant_id": tenant_id, "phone": phone}
+        return {"id": sid, "tenant_id": tenant_id, "phone": phone,
+                "reason": reason, "source": source, "note": note, "created_at": now}
+
+    def remove_suppression(self, tenant_id: str, phone: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM suppression_list WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, phone),
+        )
+        return cur.rowcount > 0
+
+    def is_suppressed(self, tenant_id: str, phone: str) -> bool:
+        row = self._row(
+            "SELECT 1 AS hit FROM suppression_list WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, phone),
+        )
+        return bool(row)
+
+    def list_suppression(
+        self, tenant_id: str, reason: Optional[str] = None,
+        limit: int = 100, offset: int = 0,
+    ) -> list[dict]:
+        if reason:
+            return self._rows(
+                "SELECT * FROM suppression_list WHERE tenant_id = ? AND reason = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (tenant_id, reason, limit, offset),
+            )
+        return self._rows(
+            "SELECT * FROM suppression_list WHERE tenant_id = ? "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (tenant_id, limit, offset),
+        )
+
+    def count_suppression(self, tenant_id: str, reason: Optional[str] = None) -> int:
+        if reason:
+            row = self._row(
+                "SELECT COUNT(*) AS n FROM suppression_list WHERE tenant_id = ? AND reason = ?",
+                (tenant_id, reason),
+            )
+        else:
+            row = self._row(
+                "SELECT COUNT(*) AS n FROM suppression_list WHERE tenant_id = ?",
+                (tenant_id,),
+            )
+        return int(row["n"]) if row else 0
+
+    def insert_sms_reply(
+        self, tenant_id: str, from_number: str, body: str,
+        campaign_id: Optional[str] = None, contact_id: Optional[str] = None,
+    ) -> dict:
+        rid = _new_id("smsr")
+        now = _utcnow()
+        self._exec(
+            "INSERT INTO sms_replies(id, tenant_id, campaign_id, contact_id, from_number, "
+            "body, received_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, tenant_id, campaign_id, contact_id, from_number, body, now),
+        )
+        return {"id": rid, "tenant_id": tenant_id, "campaign_id": campaign_id,
+                "contact_id": contact_id, "from_number": from_number, "body": body,
+                "received_at": now}
+
+    def list_sms_replies(
+        self, tenant_id: str, campaign_id: Optional[str] = None,
+    ) -> list[dict]:
+        if campaign_id:
+            return self._rows(
+                "SELECT * FROM sms_replies WHERE tenant_id = ? AND campaign_id = ? "
+                "ORDER BY received_at DESC",
+                (tenant_id, campaign_id),
+            )
+        return self._rows(
+            "SELECT * FROM sms_replies WHERE tenant_id = ? ORDER BY received_at DESC",
+            (tenant_id,),
+        )
+
+    def find_active_campaign_for_inbound(
+        self, tenant_id: str, from_number: str,
+    ) -> Optional[dict]:
+        contact = self._row(
+            "SELECT id FROM contacts WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, from_number),
+        )
+        if not contact:
+            return None
+        rows = self._rows(
+            "SELECT id, name, contact_ids FROM campaigns "
+            "WHERE tenant_id = ? AND status = 'running'",
+            (tenant_id,),
+        )
+        for c in rows:
+            try:
+                cids = json.loads(c.get("contact_ids") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                cids = []
+            if contact["id"] in cids:
+                return {"id": c["id"], "name": c.get("name", "")}
+        return None
+
+    def upsert_phone_number(
+        self, tenant_id: str, phone: str, telnyx_id: Optional[str] = None,
+        country_code: Optional[str] = None, whatsapp_enabled: bool = False,
+    ) -> dict:
+        now = _utcnow()
+        existing = self._row(
+            "SELECT * FROM phone_numbers WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, phone),
+        )
+        if existing:
+            updates = []
+            params: list = []
+            if telnyx_id is not None:
+                updates.append("telnyx_id = ?")
+                params.append(telnyx_id)
+            if country_code is not None:
+                updates.append("country_code = ?")
+                params.append(country_code)
+            if updates:
+                params.extend([tenant_id, phone])
+                self._exec(
+                    f"UPDATE phone_numbers SET {', '.join(updates)} "
+                    f"WHERE tenant_id = ? AND phone = ?",
+                    tuple(params),
+                )
+            return self._row(
+                "SELECT * FROM phone_numbers WHERE tenant_id = ? AND phone = ?",
+                (tenant_id, phone),
+            ) or {}
+        nid = _new_id("pn")
+        self._exec(
+            "INSERT INTO phone_numbers(id, tenant_id, phone, telnyx_id, country_code, "
+            "whatsapp_enabled, created_at) VALUES (?,?,?,?,?,?,?)",
+            (nid, tenant_id, phone, telnyx_id, country_code,
+             1 if whatsapp_enabled else 0, now),
+        )
+        return {"id": nid, "tenant_id": tenant_id, "phone": phone,
+                "telnyx_id": telnyx_id, "country_code": country_code,
+                "whatsapp_enabled": 1 if whatsapp_enabled else 0, "created_at": now}
+
+    def create_contact(
+        self, tenant_id: str, name: str, phone: str,
+        email: Optional[str] = None, tags: Optional[list] = None,
+    ) -> dict:
+        cid = _new_id("c")
+        now = _utcnow()
+        self._exec(
+            "INSERT INTO contacts(id, tenant_id, name, phone, email, tags, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (cid, tenant_id, name, phone, email,
+             json.dumps(tags or []), now),
+        )
+        return {"id": cid, "tenant_id": tenant_id, "name": name, "phone": phone,
+                "email": email, "tags": tags or [], "created_at": now}
+
+    def get_contact_by_phone(self, tenant_id: str, phone: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM contacts WHERE tenant_id = ? AND phone = ?",
+            (tenant_id, phone),
+        )
+
+    # ───────────────────── #27 Email ─────────────────────────────────
+    def create_email_template(
+        self, tenant_id: str, name: str, subject_template: str,
+        body_template: str, variables: Optional[list] = None,
+    ) -> dict:
+        now = _utcnow()
+        tid = _new_id("emtpl")
+        self._exec(
+            "INSERT INTO email_templates(id, tenant_id, name, subject_template, "
+            "body_template, variables, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (tid, tenant_id, name, subject_template, body_template,
+             json.dumps(variables or []), now, now),
+        )
+        return {"id": tid, "tenant_id": tenant_id, "name": name,
+                "subject_template": subject_template, "body_template": body_template,
+                "variables": variables or [], "created_at": now, "updated_at": now}
+
+    def list_email_templates(self, tenant_id: str) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM email_templates WHERE tenant_id = ? ORDER BY name",
+            (tenant_id,),
+        )
+        for r in rows:
+            try:
+                r["variables"] = json.loads(r["variables"]) if r["variables"] else []
+            except (json.JSONDecodeError, TypeError):
+                r["variables"] = []
+        return rows
+
+    def get_email_template(self, tenant_id: str, template_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM email_templates WHERE tenant_id = ? AND id = ?",
+            (tenant_id, template_id),
+        )
+        if row and "variables" in row:
+            try:
+                row["variables"] = json.loads(row["variables"]) if row["variables"] else []
+            except (json.JSONDecodeError, TypeError):
+                row["variables"] = []
+        return row
+
+    def delete_email_template(self, tenant_id: str, template_id: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM email_templates WHERE tenant_id = ? AND id = ?",
+            (tenant_id, template_id),
+        )
+        return cur.rowcount > 0
+
+    def insert_email_message(
+        self, tenant_id: str, provider: str, direction: str,
+        from_addr: str, to_addr: str, subject: str = "", body: str = "",
+        html: Optional[str] = None, status: str = "queued",
+        sent_at: Optional[str] = None, error: Optional[str] = None,
+    ) -> dict:
+        mid = _new_id("em")
+        now = _utcnow()
+        ts = sent_at or now
+        self._exec(
+            "INSERT INTO email_messages(id, tenant_id, provider, direction, from_addr, "
+            "to_addr, subject, body, html, status, error, sent_at, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (mid, tenant_id, provider, direction, from_addr, to_addr, subject, body,
+             html, status, error, ts, now),
+        )
+        return {"id": mid, "tenant_id": tenant_id, "provider": provider,
+                "direction": direction, "from_addr": from_addr, "to_addr": to_addr,
+                "subject": subject, "body": body, "html": html, "status": status,
+                "error": error, "sent_at": ts, "created_at": now}
+
+    def update_email_message_status(
+        self, tenant_id: str, email_id: str, status: str, error: Optional[str] = None,
+    ) -> None:
+        if error is not None:
+            self._exec(
+                "UPDATE email_messages SET status=?, error=? WHERE tenant_id=? AND id=?",
+                (status, error, tenant_id, email_id),
+            )
+        else:
+            self._exec(
+                "UPDATE email_messages SET status=? WHERE tenant_id=? AND id=?",
+                (status, tenant_id, email_id),
+            )
+
+    def get_email_message(self, tenant_id: str, email_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM email_messages WHERE tenant_id = ? AND id = ?",
+            (tenant_id, email_id),
+        )
+
+    def list_email_messages(
+        self, tenant_id: str, to_addr: Optional[str] = None,
+        from_addr: Optional[str] = None, limit: int = 50, offset: int = 0,
+    ) -> list[dict]:
+        where = ["tenant_id = ?"]
+        params: list = [tenant_id]
+        if to_addr:
+            where.append("to_addr = ?")
+            params.append(to_addr)
+        if from_addr:
+            where.append("from_addr = ?")
+            params.append(from_addr)
+        params.extend([limit, offset])
+        return self._rows(
+            f"SELECT * FROM email_messages WHERE {' AND '.join(where)} "
+            f"ORDER BY sent_at DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        )
+
+    # ───────────────────── #26 Meetings ──────────────────────────────
+    def create_meeting(
+        self, tenant_id: str, title: str = "", host_user_id: Optional[str] = None,
+        room_url: str = "", room_name: str = "",
+    ) -> dict:
+        mid = _new_id("mtg")
+        now = _utcnow()
+        self._exec(
+            "INSERT INTO meetings(id, tenant_id, host_user_id, title, room_url, "
+            "room_name, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (mid, tenant_id, host_user_id, title, room_url, room_name, "created", now),
+        )
+        return {"id": mid, "tenant_id": tenant_id, "host_user_id": host_user_id,
+                "title": title, "room_url": room_url, "room_name": room_name,
+                "status": "created", "created_at": now,
+                "started_at": None, "ended_at": None, "recording_url": None,
+                "participants": []}
+
+    def get_meeting(self, tenant_id: str, meeting_id: str) -> Optional[dict]:
+        row = self._row(
+            "SELECT * FROM meetings WHERE tenant_id = ? AND id = ?",
+            (tenant_id, meeting_id),
+        )
+        if row and "participants" in row:
+            try:
+                row["participants"] = json.loads(row["participants"]) if row["participants"] else []
+            except (json.JSONDecodeError, TypeError):
+                row["participants"] = []
+        return row
+
+    def list_meetings(self, tenant_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
+        rows = self._rows(
+            "SELECT * FROM meetings WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (tenant_id, limit, offset),
+        )
+        for r in rows:
+            try:
+                r["participants"] = json.loads(r["participants"]) if r["participants"] else []
+            except (json.JSONDecodeError, TypeError):
+                r["participants"] = []
+        return rows
+
+    def update_meeting_participants(
+        self, tenant_id: str, meeting_id: str, participants: list,
+    ) -> None:
+        self._exec(
+            "UPDATE meetings SET participants=? WHERE tenant_id=? AND id=?",
+            (json.dumps(participants), tenant_id, meeting_id),
+        )
+
+    def update_meeting_started(self, tenant_id: str, meeting_id: str) -> None:
+        now = _utcnow()
+        self._exec(
+            "UPDATE meetings SET status=?, started_at=? WHERE tenant_id=? AND id=?",
+            ("active", now, tenant_id, meeting_id),
+        )
+
+    def update_meeting_ended(self, tenant_id: str, meeting_id: str) -> None:
+        now = _utcnow()
+        self._exec(
+            "UPDATE meetings SET status=?, ended_at=? WHERE tenant_id=? AND id=?",
+            ("ended", now, tenant_id, meeting_id),
+        )
+
+    def update_meeting_recording(self, tenant_id: str, meeting_id: str, url: str) -> None:
+        self._exec(
+            "UPDATE meetings SET recording_url=? WHERE tenant_id=? AND id=?",
+            (url, tenant_id, meeting_id),
+        )
+
+    def append_meeting_participant(self, tenant_id: str, meeting_id: str, name: str) -> None:
+        row = self._row(
+            "SELECT participants FROM meetings WHERE tenant_id = ? AND id = ?",
+            (tenant_id, meeting_id),
+        )
+        if not row:
+            return
+        try:
+            ppl = json.loads(row["participants"]) if row["participants"] else []
+        except (json.JSONDecodeError, TypeError):
+            ppl = []
+        if name not in ppl:
+            ppl.append(name)
+        self._exec(
+            "UPDATE meetings SET participants=? WHERE tenant_id=? AND id=?",
+            (json.dumps(ppl), tenant_id, meeting_id),
+        )
+
+    def remove_meeting_participant(self, tenant_id: str, meeting_id: str, name: str) -> None:
+        row = self._row(
+            "SELECT participants FROM meetings WHERE tenant_id = ? AND id = ?",
+            (tenant_id, meeting_id),
+        )
+        if not row:
+            return
+        try:
+            ppl = json.loads(row["participants"]) if row["participants"] else []
+        except (json.JSONDecodeError, TypeError):
+            ppl = []
+        if name in ppl:
+            ppl.remove(name)
+        self._exec(
+            "UPDATE meetings SET participants=? WHERE tenant_id=? AND id=?",
+            (json.dumps(ppl), tenant_id, meeting_id),
+        )
+
+    def delete_meeting(self, tenant_id: str, meeting_id: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM meetings WHERE tenant_id = ? AND id = ?",
+            (tenant_id, meeting_id),
+        )
+        return cur.rowcount > 0
+
+    # ───────────────────── #28 Network quality ───────────────────────
+    def insert_network_quality(
+        self, tenant_id: str, call_id: Optional[str],
+        rtt_ms: float, jitter_ms: float, packet_loss_pct: float, score: float,
+    ) -> dict:
+        nid = _new_id("nq")
+        now = _utcnow()
+        self._exec(
+            "INSERT INTO network_quality_log(id, tenant_id, call_id, rtt_ms, jitter_ms, "
+            "packet_loss_pct, score, timestamp) VALUES (?,?,?,?,?,?,?,?)",
+            (nid, tenant_id, call_id, rtt_ms, jitter_ms, packet_loss_pct, score, now),
+        )
+        return {"id": nid, "tenant_id": tenant_id, "call_id": call_id,
+                "rtt_ms": rtt_ms, "jitter_ms": jitter_ms, "packet_loss_pct": packet_loss_pct,
+                "score": score, "timestamp": now}
+
+    def list_network_quality(
+        self, tenant_id: str, from_ts: Optional[str] = None,
+        to_ts: Optional[str] = None, limit: int = 200,
+    ) -> list[dict]:
+        where = ["tenant_id = ?"]
+        params: list = [tenant_id]
+        if from_ts:
+            where.append("timestamp >= ?")
+            params.append(from_ts)
+        if to_ts:
+            where.append("timestamp <= ?")
+            params.append(to_ts)
+        params.append(limit)
+        return self._rows(
+            f"SELECT * FROM network_quality_log WHERE {' AND '.join(where)} "
+            f"ORDER BY timestamp DESC LIMIT ?",
+            tuple(params),
+        )
+
+    def network_quality_summary(self, tenant_id: str) -> dict:
+        row = self._row(
+            "SELECT AVG(rtt_ms) AS avg_rtt, AVG(jitter_ms) AS avg_jitter, "
+            "AVG(packet_loss_pct) AS avg_loss, AVG(score) AS avg_score, "
+            "COUNT(*) AS n FROM network_quality_log WHERE tenant_id = ?",
+            (tenant_id,),
+        )
+        if not row or not row.get("n"):
+            return {"n": 0, "avg_rtt": 0, "avg_jitter": 0,
+                    "avg_loss": 0, "avg_score": 100}
+        return {
+            "n": int(row["n"]),
+            "avg_rtt": float(row["avg_rtt"] or 0),
+            "avg_jitter": float(row["avg_jitter"] or 0),
+            "avg_loss": float(row["avg_loss"] or 0),
+            "avg_score": float(row["avg_score"] or 0),
+        }
+
+    # ───────────────────── #29 Multi-region ──────────────────────────
+    def update_tenant_region(
+        self, tenant_id: str, region: str, region_lock: bool = False,
+    ) -> None:
+        self._exec(
+            "UPDATE tenants SET region = ?, region_lock = ? WHERE id = ?",
+            (region, 1 if region_lock else 0, tenant_id),
+        )
+
+    def list_tenants_by_region(self, region: str) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM tenants WHERE region = ? ORDER BY id",
+            (region,),
+        )
+
+    def find_tenant_by_custom_domain(self, domain: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM tenants WHERE custom_domain = ?",
+            (domain,),
+        )
+
+    # ───────────────────── #30 White-label branding ──────────────────
+    def get_tenant_brand(self, tenant_id: str) -> dict:
+        row = self._row(
+            "SELECT brand_json FROM tenants WHERE id = ?",
+            (tenant_id,),
+        )
+        if not row or not row.get("brand_json"):
+            return {}
+        try:
+            return json.loads(row["brand_json"])
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    def update_tenant_brand(self, tenant_id: str, brand: dict) -> None:
+        self._exec(
+            "UPDATE tenants SET brand_json = ? WHERE id = ?",
+            (json.dumps(brand), tenant_id),
+        )
+
+    def update_tenant_custom_domain(self, tenant_id: str, domain: str) -> None:
+        self._exec(
+            "UPDATE tenants SET custom_domain = ? WHERE id = ?",
+            (domain, tenant_id),
         )
 
 

@@ -905,7 +905,7 @@ def _shape_appwrite_message_for_ui(doc: dict) -> dict:
 
 
 @router.get("/messages/threads")
-def message_threads(request: Request, limit: int = 30) -> dict:
+def message_threads(request: Request, limit: int = 30, channel: Optional[str] = None) -> dict:
     """SMS threads: one entry per remote phone number, latest message wins.
 
     Backed by Appwrite `messages` (single source of truth). The "remote"
@@ -916,9 +916,43 @@ def message_threads(request: Request, limit: int = 30) -> dict:
     Reads up to 500 recent messages and groups in Python (Appwrite has no
     native group-by; for thousands of threads a real aggregation is needed,
     but the MVP is single-user).
+
+    ``channel`` filter: ``whatsapp`` returns the local ``whatsapp_messages``
+    table; ``email`` returns ``email_messages`` grouped by ``from_addr``;
+    ``None`` returns SMS only.
     """
     cap = min(max(int(limit), 1), 30)
     tid = _resolve_tenant(request)
+
+    # Channel-specific fast path (issues #22 WhatsApp, #27 Email)
+    if channel == "whatsapp":
+        store = get_store()
+        rows = store.list_whatsapp_threads(tid)
+        threads = [{
+            "remote": r.get("remote"),
+            "last_message": r.get("last_body", ""),
+            "last_at": r.get("last_at"),
+            "channel": "whatsapp",
+        } for r in rows[:cap]]
+        return {"threads": threads, "count": len(threads),
+                "channel": "whatsapp", "source": "local"}
+    if channel == "email":
+        store = get_store()
+        rows = store.list_email_messages(tid, limit=500)
+        seen: dict = {}
+        for r in rows:
+            addr = r.get("from_addr") if r.get("direction") == "inbound" else r.get("to_addr")
+            if not addr or addr in seen:
+                continue
+            seen[addr] = {
+                "remote": addr,
+                "last_message": r.get("subject", ""),
+                "last_at": r.get("sent_at"),
+                "channel": "email",
+            }
+        threads = list(seen.values())[:cap]
+        return {"threads": threads, "count": len(threads),
+                "channel": "email", "source": "local"}
     # Primary: Appwrite
     try:
         from appx.repos import messages as messages_repo

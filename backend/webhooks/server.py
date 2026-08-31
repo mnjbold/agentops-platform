@@ -432,6 +432,40 @@ app.include_router(analytics_router)
 app.include_router(billing_router)
 app.include_router(audit_router)
 
+# Phase C #22 + #23 — WhatsApp + SMS blast (rescued; storage methods
+# live in storage.py, the routers were authored by the C1 worker).
+try:
+    from webhooks.whatsapp_api import router as whatsapp_router
+    from webhooks.suppression_api import router as suppression_router
+    from webhooks.sms_scheduler import router as sms_scheduler_router
+    app.include_router(whatsapp_router)
+    app.include_router(suppression_router)
+    app.include_router(sms_scheduler_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase C outbound routers not mounted: %s", _exc)
+
+# Phase D #26 + #27 — Meetings (Daily.co) + Email (provider-agnostic).
+try:
+    from webhooks.meetings import router as meetings_router
+    from webhooks.email import router as email_router
+    app.include_router(meetings_router)
+    app.include_router(email_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase D adjacent routers not mounted: %s", _exc)
+
+# Phase D #28 + #29 + #30 — DNS, network quality, regions, branding.
+try:
+    from webhooks.dns_api import router as dns_router
+    from webhooks.network_quality import router as network_quality_router
+    from webhooks.regions_api import router as regions_router
+    from webhooks.branding_api import router as branding_router
+    app.include_router(dns_router)
+    app.include_router(network_quality_router)
+    app.include_router(regions_router)
+    app.include_router(branding_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase D infra routers not mounted: %s", _exc)
+
 
 # ──────────────────── audit middleware (#20) ──────────────────────────────
 # Append a row to audit_log for every /api/* (and /v1/*) request AFTER
