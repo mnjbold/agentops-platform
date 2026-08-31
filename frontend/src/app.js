@@ -185,7 +185,7 @@ const routes = {
 };
 
 // Auth-gated routes
-const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents', '/workflows', '/assistants', '/voice-lab', '/agent-test', '/numbers'];
+const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents', '/workflows', '/assistants', '/voice-lab', '/agent-test', '/numbers', '/analytics', '/billing', '/audit'];
 const router = createRouter(routes, {
   onChange: ({ path }) => {
     // mark active link
