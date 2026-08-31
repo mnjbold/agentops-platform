@@ -598,6 +598,64 @@ CREATE TABLE IF NOT EXISTS network_quality_log (
     timestamp       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_nq_tenant ON network_quality_log(tenant_id, timestamp);
+
+-- ────────────── Phase E Live Agent v1 (issues #31, #32, #34) ─────────────
+-- #31 — Agent presence: one row per (tenant, user). `status` is the
+-- v1 enum online | away | busy | on_call | offline. `last_seen` is the
+-- ISO timestamp of the most recent heartbeat; the periodic offline
+-- sweeper (see webhooks.presence) flips 'online' to 'offline' when
+-- last_seen < now - 90s.
+CREATE TABLE IF NOT EXISTS agent_presence (
+    tenant_id        TEXT NOT NULL,
+    user_id          TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK(status IN
+                       ('online','away','busy','on_call','offline')),
+    last_seen        TEXT NOT NULL,
+    current_call_id  TEXT,
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, user_id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_presence_tenant_status
+    ON agent_presence(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_presence_last_seen
+    ON agent_presence(tenant_id, last_seen);
+
+-- #31 — Agent skills: one row per (tenant, user, skill). `level` is an
+-- optional 0-100 proficiency hint, defaults to 50. Used by #32's queue
+-- (skill-tag match) and #34's forward_agent node (skill routing).
+CREATE TABLE IF NOT EXISTS agent_skills (
+    tenant_id     TEXT NOT NULL,
+    user_id       TEXT NOT NULL,
+    skill         TEXT NOT NULL,
+    level         INTEGER NOT NULL DEFAULT 50,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, user_id, skill),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_skills_skill
+    ON agent_skills(tenant_id, skill);
+
+-- #32 — Call queue: FIFO of pending human-handoff calls. ``status``
+-- progresses queued → assigned → answered. ``abandoned`` happens when
+-- the caller hangs up before being answered.
+CREATE TABLE IF NOT EXISTS call_queue (
+    id                 TEXT PRIMARY KEY,
+    tenant_id          TEXT NOT NULL,
+    call_id            TEXT NOT NULL,
+    enqueued_at        TEXT NOT NULL,
+    priority           INTEGER NOT NULL DEFAULT 0,
+    skill_tags_json    TEXT NOT NULL DEFAULT '[]',
+    assigned_user_id   TEXT,
+    status             TEXT NOT NULL CHECK(status IN
+                         ('queued','assigned','answered','abandoned')),
+    dequeued_at        TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_call_queue_tenant_status
+    ON call_queue(tenant_id, status, priority DESC, enqueued_at ASC);
+CREATE INDEX IF NOT EXISTS idx_call_queue_call
+    ON call_queue(tenant_id, call_id);
 """
 
 
@@ -644,6 +702,7 @@ class Store:
             self._run_migrations_phase_b()
             self._run_migrations_phase_c()
             self._run_migrations_phase_d()
+            self._run_migrations_phase_e()
             cur = self._conn.execute(
                 "SELECT id FROM tenants WHERE id = 'default'"
             )
@@ -811,6 +870,31 @@ class Store:
                 "ALTER TABLE tenants ADD COLUMN custom_domain TEXT"
             )
             log.info("Migrated tenants.custom_domain")
+
+    def _run_migrations_phase_e(self) -> None:
+        """Phase E migrations for issues #31, #34.
+
+        - ``users.assigned_number`` (nullable E.164 string) — the
+          human agent's direct DID that the workflow engine can
+          transfer to when ``forward_agent`` finds them idle.
+        - ``users.display_name`` (nullable) — a friendlier label than
+          the email, used in the agent dashboard's recent-calls list
+          and presence roster.
+
+        Each ALTER is guarded by a PRAGMA check so the migration is
+        idempotent across restarts and across pre-Phase-E databases.
+        """
+        u_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "assigned_number" not in u_cols:
+            self._conn.execute(
+                "ALTER TABLE users ADD COLUMN assigned_number TEXT"
+            )
+            log.info("Migrated users.assigned_number")
+        if "display_name" not in u_cols:
+            self._conn.execute(
+                "ALTER TABLE users ADD COLUMN display_name TEXT"
+            )
+            log.info("Migrated users.display_name")
 
     def close(self) -> None:
         with self._lock:
@@ -3026,6 +3110,397 @@ class Store:
         self._exec(
             "UPDATE tenants SET custom_domain = ? WHERE id = ?",
             (domain, tenant_id),
+        )
+
+    # ───────────────────── users listing (#31) ─────────────────────
+    def list_users(self, tenant_id: str) -> list[dict]:
+        """Return every user for the tenant. Safe to call on the request
+        thread — reads are lockless. Joins nothing; presence + skills
+        are fetched by the API layer (issue #31)."""
+        return self._rows(
+            "SELECT id, tenant_id, email, role, assigned_number, display_name, "
+            "created_at FROM users WHERE tenant_id = ? ORDER BY created_at",
+            (tenant_id,),
+        )
+
+    def update_user_agent(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        assigned_number: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Set the agent-direct DID and/or display name. Both arguments
+        are nullable; pass ``None`` to leave a field unchanged. Used by
+        the admin API and by the seed script."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if assigned_number is not None:
+            sets.append("assigned_number = ?")
+            params.append(assigned_number or None)
+        if display_name is not None:
+            sets.append("display_name = ?")
+            params.append(display_name or None)
+        if not sets:
+            return self.get_user_by_id(user_id)
+        params.extend([tenant_id, user_id])
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE users SET {', '.join(sets)} "
+                "WHERE tenant_id = ? AND id = ?",
+                tuple(params),
+            )
+        return self.get_user_by_id(user_id)
+
+    # ───────────────────── #31 Agent presence ──────────────────────
+    def upsert_presence(
+        self,
+        tenant_id: str,
+        user_id: str,
+        status: str,
+        current_call_id: Optional[str] = None,
+    ) -> dict:
+        """Insert or update one agent's presence row. Bumps ``last_seen``
+        and ``updated_at`` to now. Returns the persisted row."""
+        now = _utcnow()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO agent_presence(tenant_id, user_id, status, "
+                "last_seen, current_call_id, updated_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(tenant_id, user_id) DO UPDATE SET "
+                "status = excluded.status, "
+                "last_seen = excluded.last_seen, "
+                "current_call_id = excluded.current_call_id, "
+                "updated_at = excluded.updated_at",
+                (tenant_id, user_id, status, now, current_call_id, now),
+            )
+        return self.get_presence(tenant_id, user_id)  # type: ignore[return-value]
+
+    def get_presence(self, tenant_id: str, user_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM agent_presence WHERE tenant_id = ? AND user_id = ?",
+            (tenant_id, user_id),
+        )
+
+    def list_presence(self, tenant_id: str) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM agent_presence WHERE tenant_id = ? "
+            "ORDER BY last_seen DESC",
+            (tenant_id,),
+        )
+
+    def touch_presence(self, tenant_id: str, user_id: str) -> None:
+        """Bump ``last_seen`` to now without changing ``status``."""
+        now = _utcnow()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO agent_presence(tenant_id, user_id, status, "
+                "last_seen, current_call_id, updated_at) "
+                "VALUES (?,?,?,?,NULL,?) "
+                "ON CONFLICT(tenant_id, user_id) DO UPDATE SET "
+                "last_seen = excluded.last_seen, "
+                "updated_at = excluded.updated_at",
+                (tenant_id, user_id, "offline", now, now),
+            )
+
+    def sweep_stale_presence(
+        self, tenant_id: str, *, idle_secs: int = 90, now: Optional[str] = None,
+    ) -> int:
+        """Auto-flip any ``status='online'`` row whose ``last_seen`` is
+        older than ``idle_secs`` to ``offline``."""
+        from datetime import datetime, timedelta, timezone
+        if now is None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=idle_secs)).isoformat()
+        else:
+            cutoff = (datetime.fromisoformat(now.replace("Z", "+00:00")) -
+                      timedelta(seconds=idle_secs)).isoformat()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE agent_presence SET status = 'offline', "
+                "current_call_id = NULL, updated_at = ? "
+                "WHERE tenant_id = ? AND status = 'online' AND last_seen < ?",
+                (_utcnow(), tenant_id, cutoff),
+            )
+            return cur.rowcount
+
+    def find_idle_online_agent(
+        self,
+        tenant_id: str,
+        skill: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Return the longest-idle 'online' user (or first matching skill)."""
+        params: list[Any] = [tenant_id]
+        skill_clause = ""
+        if skill:
+            skill_clause = (
+                " AND EXISTS (SELECT 1 FROM agent_skills s "
+                " WHERE s.tenant_id = p.tenant_id "
+                "   AND s.user_id = p.user_id "
+                "   AND LOWER(s.skill) = LOWER(?))"
+            )
+            params.append(skill)
+        sql = (
+            "SELECT p.tenant_id, p.user_id, p.status, p.last_seen, "
+            "       p.current_call_id, p.updated_at, "
+            "       u.email, u.role, u.assigned_number, u.display_name "
+            "FROM agent_presence p "
+            "LEFT JOIN users u ON u.tenant_id = p.tenant_id AND u.id = p.user_id "
+            "WHERE p.tenant_id = ? AND p.status = 'online' "
+            f"{skill_clause} "
+            "ORDER BY p.last_seen ASC LIMIT 1"
+        )
+        return self._row(sql, tuple(params))
+
+    # ───────────────────── #31 Agent skills ────────────────────────
+    def set_user_skills(
+        self,
+        tenant_id: str,
+        user_id: str,
+        skills: list,
+    ) -> list[dict]:
+        """Replace the user's skill set atomically."""
+        if not isinstance(skills, list):
+            raise ValueError("skills must be a list")
+        now = _utcnow()
+        rows: list[tuple[str, str, int, str]] = []
+        for s in skills:
+            if isinstance(s, str):
+                rows.append((tenant_id, user_id, s, 50))
+            elif isinstance(s, dict):
+                tag = s.get("skill")
+                if not tag or not isinstance(tag, str):
+                    continue
+                try:
+                    lvl = int(s.get("level", 50))
+                except (TypeError, ValueError):
+                    lvl = 50
+                lvl = max(0, min(100, lvl))
+                rows.append((tenant_id, user_id, tag, lvl))
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM agent_skills WHERE tenant_id = ? AND user_id = ?",
+                (tenant_id, user_id),
+            )
+            for (tid, uid, tag, lvl) in rows:
+                self._conn.execute(
+                    "INSERT INTO agent_skills(tenant_id, user_id, skill, level, "
+                    "updated_at) VALUES (?,?,?,?,?)",
+                    (tid, uid, tag, lvl, now),
+                )
+        return self.get_user_skills(tenant_id, user_id)
+
+    def get_user_skills(self, tenant_id: str, user_id: str) -> list[dict]:
+        return self._rows(
+            "SELECT skill, level, updated_at FROM agent_skills "
+            "WHERE tenant_id = ? AND user_id = ? ORDER BY skill",
+            (tenant_id, user_id),
+        )
+
+    def list_tenant_skills(self, tenant_id: str) -> list[dict]:
+        """Distinct skill tags used in this tenant + count of users
+        holding each. Used by the workflow editor's skill dropdown."""
+        return self._rows(
+            "SELECT skill, COUNT(*) AS user_count FROM agent_skills "
+            "WHERE tenant_id = ? GROUP BY skill ORDER BY skill",
+            (tenant_id,),
+        )
+
+    # ───────────────────── #32 Call queue ──────────────────────────
+    def enqueue_call(
+        self,
+        tenant_id: str,
+        call_id: str,
+        skill_tags: Optional[list] = None,
+        priority: int = 0,
+    ) -> dict:
+        """Append a call to the queue. Idempotent on (tenant_id,
+        call_id, status='queued')."""
+        if not isinstance(priority, int):
+            try:
+                priority = int(priority)
+            except (TypeError, ValueError):
+                priority = 0
+        tags = skill_tags if isinstance(skill_tags, list) else []
+        tags_json = json.dumps(tags)
+        now = _utcnow()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM call_queue "
+                "WHERE tenant_id = ? AND call_id = ? AND status = 'queued'",
+                (tenant_id, call_id),
+            ).fetchone()
+            if existing:
+                return self._row("SELECT * FROM call_queue WHERE id = ?", (existing[0],))  # type: ignore[return-value]
+            qid = _new_id("q")
+            self._conn.execute(
+                "INSERT INTO call_queue(id, tenant_id, call_id, enqueued_at, "
+                "priority, skill_tags_json, assigned_user_id, status, dequeued_at) "
+                "VALUES (?,?,?,?,?,?,NULL,'queued', NULL)",
+                (qid, tenant_id, call_id, now, priority, tags_json),
+            )
+        return self._row("SELECT * FROM call_queue WHERE id = ?", (qid,))  # type: ignore[return-value]
+
+    def dequeue_for_user(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        user_skills: Optional[list] = None,
+    ) -> Optional[dict]:
+        """Pop the highest-priority oldest queued call whose skill tags
+        intersect with the agent's skill set (if both are non-empty).
+        Returns the row (status now 'assigned') or None."""
+        with self._lock:
+            rows = self._rows(
+                "SELECT * FROM call_queue "
+                "WHERE tenant_id = ? AND status = 'queued' "
+                "ORDER BY priority DESC, enqueued_at ASC",
+                (tenant_id,),
+            )
+            if not rows:
+                return None
+            agent_skill_set: set[str] = set()
+            for s in (user_skills or []):
+                if isinstance(s, dict):
+                    tag = s.get("skill")
+                else:
+                    tag = s
+                if isinstance(tag, str):
+                    agent_skill_set.add(tag.lower())
+            chosen: Optional[dict] = None
+            for r in rows:
+                if not agent_skill_set:
+                    chosen = r
+                    break
+                try:
+                    tags = json.loads(r.get("skill_tags_json") or "[]")
+                except json.JSONDecodeError:
+                    tags = []
+                if any(isinstance(t, str) and t.lower() in agent_skill_set
+                       for t in tags):
+                    chosen = r
+                    break
+            if chosen is None:
+                return None
+            now = _utcnow()
+            self._conn.execute(
+                "UPDATE call_queue SET status = 'assigned', "
+                "assigned_user_id = ?, dequeued_at = ? "
+                "WHERE id = ?",
+                (user_id, now, chosen["id"]),
+            )
+            return self._row("SELECT * FROM call_queue WHERE id = ?", (chosen["id"],))
+
+    def get_queue_position(self, tenant_id: str, call_id: str) -> Optional[dict]:
+        """Return {position, ahead, eta_s} for ``call_id`` or None."""
+        row = self._row(
+            "SELECT * FROM call_queue "
+            "WHERE tenant_id = ? AND call_id = ? AND status = 'queued'",
+            (tenant_id, call_id),
+        )
+        if not row:
+            return None
+        ahead = self._row(
+            "SELECT COUNT(*) AS n FROM call_queue "
+            "WHERE tenant_id = ? AND status = 'queued' AND "
+            "       (priority > ? OR (priority = ? AND enqueued_at < ?))",
+            (tenant_id, row.get("priority") or 0,
+             row.get("priority") or 0, row.get("enqueued_at") or ""),
+        )
+        n_ahead = int((ahead or {}).get("n") or 0)
+        return {"position": n_ahead + 1, "ahead": n_ahead, "eta_s": n_ahead * 30}
+
+    def get_queue_stats(self, tenant_id: str) -> dict:
+        """Counts for the queue dashboard tile."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        today = now.date().isoformat()
+        oldest = self._row(
+            "SELECT MIN(enqueued_at) AS oldest FROM call_queue "
+            "WHERE tenant_id = ? AND status = 'queued'",
+            (tenant_id,),
+        )
+        longest_wait_s = 0
+        oldest_iso = (oldest or {}).get("oldest")
+        if oldest_iso:
+            try:
+                dt = datetime.fromisoformat(oldest_iso.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                longest_wait_s = max(0, int((now - dt).total_seconds()))
+            except Exception:
+                pass
+        waiting_row = self._row(
+            "SELECT COUNT(*) AS n FROM call_queue "
+            "WHERE tenant_id = ? AND status IN ('queued','assigned')",
+            (tenant_id,),
+        )
+        abandoned_today = self._row(
+            "SELECT COUNT(*) AS n FROM call_queue "
+            "WHERE tenant_id = ? AND status = 'abandoned' "
+            "       AND enqueued_at >= ?",
+            (tenant_id, today),
+        )
+        answered_today = self._row(
+            "SELECT COUNT(*) AS n FROM call_queue "
+            "WHERE tenant_id = ? AND status = 'answered' "
+            "       AND enqueued_at >= ?",
+            (tenant_id, today),
+        )
+        return {
+            "waiting": int((waiting_row or {}).get("n") or 0),
+            "longest_wait_s": longest_wait_s,
+            "abandoned_today": int((abandoned_today or {}).get("n") or 0),
+            "answered_today": int((answered_today or {}).get("n") or 0),
+        }
+
+    def mark_abandoned(self, tenant_id: str, call_id: str) -> Optional[dict]:
+        """Flip the call's queue row to 'abandoned'. Idempotent."""
+        now = _utcnow()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE call_queue SET status = 'abandoned', "
+                "dequeued_at = COALESCE(dequeued_at, ?) "
+                "WHERE tenant_id = ? AND call_id = ? "
+                "      AND status IN ('queued','assigned')",
+                (now, tenant_id, call_id),
+            )
+        return self._row(
+            "SELECT * FROM call_queue "
+            "WHERE tenant_id = ? AND call_id = ? "
+            "ORDER BY enqueued_at DESC LIMIT 1",
+            (tenant_id, call_id),
+        )
+
+    def mark_answered(self, tenant_id: str, call_id: str) -> Optional[dict]:
+        """Flip the call's queue row to 'answered'."""
+        now = _utcnow()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE call_queue SET status = 'answered', "
+                "dequeued_at = COALESCE(dequeued_at, ?) "
+                "WHERE tenant_id = ? AND call_id = ? "
+                "      AND status = 'assigned'",
+                (now, tenant_id, call_id),
+            )
+        return self._row(
+            "SELECT * FROM call_queue "
+            "WHERE tenant_id = ? AND call_id = ? "
+            "ORDER BY enqueued_at DESC LIMIT 1",
+            (tenant_id, call_id),
+        )
+
+    def list_queue(self, tenant_id: str, status: Optional[str] = None) -> list[dict]:
+        where = "tenant_id = ?"
+        params: list[Any] = [tenant_id]
+        if status:
+            where += " AND status = ?"
+            params.append(status)
+        return self._rows(
+            f"SELECT * FROM call_queue WHERE {where} "
+            "ORDER BY priority DESC, enqueued_at ASC",
+            tuple(params),
         )
 
 

@@ -65,6 +65,10 @@ from webhooks.campaigns_extra import router as campaigns_extra_router  # noqa: E
 from webhooks.synthetic_api import router as synthetic_api_router  # noqa: E402
 from webhooks.compliance_api import router as compliance_api_router  # noqa: E402
 from agent_sdk.assistants import router as assistants_router  # noqa: E402
+# Phase E-A live-agent surface (issues #31, #32). Mounted before the
+# Phase B business routers so its WebSocket at /api/agents/me/events
+# wins over any future /v1/* overlap.
+from webhooks.presence import router as presence_router, start_presence_sweeper  # noqa: E402
 # Phase B business surface (issues #16, #19, #20, #21). The other Phase B
 # worker owns #13/14/15/17/18 — we only mount /v1/* routers that don't
 # touch their tables/handlers.
@@ -444,6 +448,16 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("Phase C outbound routers not mounted: %s", _exc)
 
+# Phase E-A — live-agent presence (#31) + call queue (#32). The
+# queue router is loaded lazily so issue #31's commit can ship
+# without issue #32's router (each issue is pushed independently).
+app.include_router(presence_router)
+try:
+    from webhooks.queue import router as queue_router
+    app.include_router(queue_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase E queue router not mounted yet: %s", _exc)
+
 # Phase D #26 + #27 — Meetings (Daily.co) + Email (provider-agnostic).
 try:
     from webhooks.meetings import router as meetings_router
@@ -758,6 +772,15 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         except Exception:
             pass
         log.info("WS disconnect: session=%r broker=%s", token or "<broadcast>", ws_broker.stats())
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    """Background tasks that need the running event loop."""
+    try:
+        start_presence_sweeper()
+    except Exception as e:
+        log.warning("could not start presence sweeper: %s", e)
 
 
 @app.get("/admin/ws/stats")
