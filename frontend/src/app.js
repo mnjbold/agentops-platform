@@ -33,6 +33,7 @@ import { mountVoiceLabScreen }    from './screens/voice-lab.js';
 import { mountAgentTestScreen }   from './screens/agent-test.js';
 import { mountNumbersScreen }     from './screens/numbers.js';
 import { mountAgentDashboard }    from './screens/agent_dashboard.js';
+import { mountSupervisorScreen }  from './screens/supervisor.js';
 
 const themeStore = persistedStore('agentops.theme', { theme: 'dark' });
 
@@ -55,6 +56,17 @@ app.append(sidebar, topbar, main);
 
 /* === Sidebar ===================================================== */
 function buildSidebar() {
+  // Issue #44: the Supervisor screen is only useful to operators whose
+  // role can read the /api/skills endpoint and POST to
+  // /api/calls/.../supervisor/* (i.e. role in {supervisor, admin}).
+  // The role is on the JWT-derived user in the token store; when no
+  // user is signed in we hide the link so the dev default never shows
+  // a route they can't use.
+  let user = null;
+  try { user = (tokenStore.get() || {}).user || null; } catch (e) { user = null; }
+  const isPrivileged = user && ['supervisor', 'admin'].includes(
+    (user.role || '').toLowerCase(),
+  );
   const items = [
     {
       heading: 'Workspace',
@@ -94,6 +106,9 @@ function buildSidebar() {
         { id: 'workflows', href: '#/workflows', label: 'Workflows', icon: '◇' },
         { id: 'numbers',   href: '#/numbers',   label: 'Numbers',   icon: '#' },
         { id: 'agent-test',href: '#/agent-test',label: 'Test agent',icon: '☎' },
+        ...(isPrivileged
+          ? [{ id: 'supervisor', href: '#/supervisor', label: 'Supervisor', icon: '🎧' }]
+          : []),
       ],
     },
   ];
@@ -174,6 +189,7 @@ const routes = {
   '/voice-lab':    () => mountVoiceLabScreen(main),
   '/agent-test':   () => mountAgentTestScreen(main),
   '/numbers':      () => mountNumbersScreen(main),
+  '/supervisor':   () => mountSupervisorScreen(main),
   '/analytics':    () => mountAnalyticsScreen(main),
   '/billing':      () => mountBillingScreen(main),
   '/audit':        () => mountAuditScreen(main),
@@ -187,7 +203,7 @@ const routes = {
 };
 
 // Auth-gated routes
-const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents', '/workflows', '/assistants', '/voice-lab', '/agent-test', '/numbers', '/analytics', '/billing', '/audit'];
+const protectedPaths = ['/', '/dialer', '/calls', '/messages', '/voicemail', '/recordings', '/campaigns', '/power-dialer', '/contacts', '/tenants', '/settings', '/agents', '/workflows', '/assistants', '/voice-lab', '/agent-test', '/numbers', '/supervisor', '/analytics', '/billing', '/audit'];
 const router = createRouter(routes, {
   onChange: ({ path }) => {
     // mark active link
