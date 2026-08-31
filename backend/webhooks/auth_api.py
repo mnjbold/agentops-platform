@@ -138,6 +138,17 @@ def create_initial_user(tenant_id: str, email: str, password: str, role: str = "
     return user
 
 
+_BACKEND_DEV_PASSWORD_LOG = (
+    "=================================================================\n"
+    "  ADMIN PASSWORD from BACKEND_DEV_PASSWORD env:\n"
+    "    email:    %s\n"
+    "    password: %s\n"
+    "  The env var is set — password was reset on this boot. To disable,\n"
+    "  unset BACKEND_DEV_PASSWORD and redeploy.\n"
+    "================================================================="
+)
+
+
 def _reset_user_password(tenant_id: str, email: str, new_password: str) -> bool:
     """Reset the password for an existing user. Returns True if the user
     was found and updated, False otherwise. Called from the bootstrap

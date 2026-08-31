@@ -580,52 +580,36 @@ def _migrate_legacy_env_to_secrets() -> None:
                 "is the only source of truth.",
                 env_key, secret_key,
             )
-        if any_migrated:
-            # One-time admin password reset: if BACKEND_DEV_PASSWORD is set
-            # in the env, reset the password for the default-tenant admin
-            # user to that value. Use this to recover from a lost /
-            # randomly-generated password without SSH'ing into the host.
-            dev_pwd = os.environ.get("BACKEND_DEV_PASSWORD")
-            if dev_pwd:
-                from webhooks.auth_api import _reset_user_password
-                _reset_user_password(tenant_id="default", email="admin@default.local", new_password=dev_pwd)
-                log.warning(
-                    "=================================================================\n"
-                    "  ADMIN PASSWORD RESET from BACKEND_DEV_PASSWORD env:\n"
-                    "    email:    admin@default.local\n"
-                    "    password: %s\n"
-                    "  This was triggered because BACKEND_DEV_PASSWORD is set in the env.\n"
-                    "  To disable this, unset BACKEND_DEV_PASSWORD and redeploy.\n"
-                    "=================================================================",
-                    dev_pwd,
-                )
+    except Exception as e:
+        log.warning("Legacy env->secret migration failed (non-fatal): %s", e)
 
-            # Seed the admin user on first boot (only if no users exist
-            # for the default tenant yet).
-            if not store.get_user("default", f"admin@default.local"):
+    # One-time admin password reset: if BACKEND_DEV_PASSWORD is set in the
+    # env, reset the password for the default-tenant admin user to that
+    # value. Runs on EVERY boot (not gated on any_migrated) so the
+    # operator can recover from a lost / randomly-generated password
+    # without SSH'ing into the host.
+    dev_pwd = os.environ.get("BACKEND_DEV_PASSWORD")
+    if dev_pwd:
+        try:
+            from webhooks.auth_api import _reset_user_password, _BACKEND_DEV_PASSWORD_LOG
+            store = get_store()
+            user = store.get_user("default", "admin@default.local")
+            if user:
+                if _reset_user_password(tenant_id="default", email="admin@default.local", new_password=dev_pwd):
+                    log.warning(_BACKEND_DEV_PASSWORD_LOG, dev_pwd)
+            else:
+                # No admin user yet — fall back to the original seed path.
                 import secrets as _s
-                # Dev-mode: honor a known password so the dev script can
-                # print credentials the user can actually type. In prod,
-                # leave the env unset and a random password is generated.
-                pwd = os.environ.get("BACKEND_DEV_PASSWORD") or _s.token_urlsafe(18)
+                pwd = dev_pwd or _s.token_urlsafe(18)
                 create_initial_user(
                     tenant_id="default",
                     email="admin@default.local",
                     password=pwd,
                     role="admin",
                 )
-                log.warning(
-                    "=================================================================\n"
-                    "  DEFAULT TENANT ADMIN (one-time setup):\n"
-                    "    email:    admin@default.local\n"
-                    "    password: %s\n"
-                    "  Use POST /api/auth/login to exchange this for a JWT.\n"
-                    "  This password is NOT recoverable — rotate via /api/admin/tenants/default/rotate-key + /api/auth/reset.\n"
-                    "=================================================================",
-                    pwd,
-                )
-    except Exception as e:
-        log.warning("Legacy env->secret migration failed (non-fatal): %s", e)
+                log.warning(_BACKEND_DEV_PASSWORD_LOG, pwd)
+        except Exception as e:
+            log.warning("BACKEND_DEV_PASSWORD reset failed (non-fatal): %s", e)
 
 
 _migrate_legacy_env_to_secrets()
