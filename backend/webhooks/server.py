@@ -62,6 +62,8 @@ from webhooks.voicemail_api import router as voicemail_router  # noqa: E402
 from webhooks.workflow_engine import router as workflow_router  # noqa: E402
 from webhooks.numbers import router as numbers_router  # noqa: E402
 from webhooks.campaigns_extra import router as campaigns_extra_router  # noqa: E402
+from webhooks.synthetic_api import router as synthetic_api_router  # noqa: E402
+from webhooks.compliance_api import router as compliance_api_router  # noqa: E402
 from agent_sdk.assistants import router as assistants_router  # noqa: E402
 # Phase B business surface (issues #16, #19, #20, #21). The other Phase B
 # worker owns #13/14/15/17/18 — we only mount /v1/* routers that don't
@@ -418,6 +420,11 @@ app.include_router(voicemail_router)
 app.include_router(workflow_router)
 app.include_router(campaigns_extra_router)
 app.include_router(assistants_router)
+
+# Phase C — compliance + mass test (issues #24, #25). The other Phase C
+# worker owns #22/23 (WhatsApp + SMS blast) and is mounted separately.
+app.include_router(synthetic_api_router)
+app.include_router(compliance_api_router)
 
 # Phase B business surface (#16, #19, #20). Mounted at /v1/* so the
 # public docs can advertise a stable v1 contract.

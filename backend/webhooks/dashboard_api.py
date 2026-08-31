@@ -1392,6 +1392,11 @@ async def create_campaign(request: Request) -> dict:
 
     If ``schedule_at`` is in the future, status starts as ``scheduled``;
     otherwise ``draft`` (the user must call ``/launch`` to actually run it).
+
+    Optional Phase C flags: ``test_mode`` (0/1), ``dnc_check_enabled``
+    (0/1, default 1), ``time_window_enabled`` (0/1, default 1),
+    ``time_window_start`` (int 0-23, default 8), ``time_window_end``
+    (int 1-24, default 21). See issues #24 and #25.
     """
     try:
         body = await request.json()
@@ -1411,6 +1416,27 @@ async def create_campaign(request: Request) -> dict:
         contact_ids=body.get("contact_ids") or [],
         schedule_at=body.get("schedule_at"),
     )
+    # Apply Phase C flags if provided. We do this as a second PATCH so
+    # the create_campaign signature stays Phase A clean.
+    patch_fields: dict = {}
+    if "test_mode" in body:
+        patch_fields["test_mode"] = 1 if bool(body["test_mode"]) else 0
+    if "dnc_check_enabled" in body:
+        patch_fields["dnc_check_enabled"] = 1 if bool(body["dnc_check_enabled"]) else 0
+    if "time_window_enabled" in body:
+        patch_fields["time_window_enabled"] = 1 if bool(body["time_window_enabled"]) else 0
+    if "time_window_start" in body:
+        try:
+            patch_fields["time_window_start"] = int(body["time_window_start"])
+        except (TypeError, ValueError):
+            pass
+    if "time_window_end" in body:
+        try:
+            patch_fields["time_window_end"] = int(body["time_window_end"])
+        except (TypeError, ValueError):
+            pass
+    if patch_fields:
+        campaign = store.update_campaign(_tenant_id(request), campaign["id"], **patch_fields) or campaign
     return {"ok": True, "campaign": campaign}
 
 
