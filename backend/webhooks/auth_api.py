@@ -136,3 +136,24 @@ def create_initial_user(tenant_id: str, email: str, password: str, role: str = "
         role=role,
     )
     return user
+
+
+def _reset_user_password(tenant_id: str, email: str, new_password: str) -> bool:
+    """Reset the password for an existing user. Returns True if the user
+    was found and updated, False otherwise. Called from the bootstrap
+    path when ``BACKEND_DEV_PASSWORD`` is set in the env so the operator
+    can recover a lost / randomly-generated password without SSH.
+    """
+    from webhooks.storage import get_store
+    store = get_store()
+    user = store.get_user(tenant_id, email)
+    if not user:
+        return False
+    pwd_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    with store._lock:  # type: ignore[attr-defined]
+        store._conn.execute(  # type: ignore[attr-defined]
+            "UPDATE users SET password_hash = ? WHERE tenant_id = ? AND email = ?",
+            (pwd_hash, tenant_id, email),
+        )
+        store._conn.commit()  # type: ignore[attr-defined]
+    return True

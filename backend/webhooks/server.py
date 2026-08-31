@@ -581,6 +581,25 @@ def _migrate_legacy_env_to_secrets() -> None:
                 env_key, secret_key,
             )
         if any_migrated:
+            # One-time admin password reset: if BACKEND_DEV_PASSWORD is set
+            # in the env, reset the password for the default-tenant admin
+            # user to that value. Use this to recover from a lost /
+            # randomly-generated password without SSH'ing into the host.
+            dev_pwd = os.environ.get("BACKEND_DEV_PASSWORD")
+            if dev_pwd:
+                from webhooks.auth_api import _reset_user_password
+                _reset_user_password(tenant_id="default", email="admin@default.local", new_password=dev_pwd)
+                log.warning(
+                    "=================================================================\n"
+                    "  ADMIN PASSWORD RESET from BACKEND_DEV_PASSWORD env:\n"
+                    "    email:    admin@default.local\n"
+                    "    password: %s\n"
+                    "  This was triggered because BACKEND_DEV_PASSWORD is set in the env.\n"
+                    "  To disable this, unset BACKEND_DEV_PASSWORD and redeploy.\n"
+                    "=================================================================",
+                    dev_pwd,
+                )
+
             # Seed the admin user on first boot (only if no users exist
             # for the default tenant yet).
             if not store.get_user("default", f"admin@default.local"):
