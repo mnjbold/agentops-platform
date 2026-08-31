@@ -63,8 +63,11 @@ export function mountLoginScreen(root) {
 
     try {
       const res = await api.post('/auth/login', { email: e, password: p });
-      if (!res?.token) throw new Error('No token returned');
-      login(res.token, res.user || { email: e });
+      // Backend returns either { token } (legacy /api/login) or
+      // { access_token, ... } (new /api/auth/login). Accept both.
+      const token = res?.access_token || res?.token;
+      if (!token) throw new Error('No token returned');
+      login(token, res.user || { email: e });
       window.location.hash = '#/';
       window.location.reload();
     } catch (err) {
