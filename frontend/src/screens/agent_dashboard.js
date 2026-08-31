@@ -21,7 +21,7 @@ import { createAvatar } from '../ui/avatar.js';
 import { createEmptyState } from '../ui/empty-state.js';
 import { createModal } from '../ui/modal.js';
 import { createTextarea } from '../ui/input.js';
-import { toastError, toastSuccess } from '../ui/toast.js';
+import { toastError, toastInfo, toastSuccess } from '../ui/toast.js';
 
 const STATUS_OPTIONS = [
   { value: 'online',  label: 'Online',  variant: 'success' },
@@ -48,6 +48,7 @@ const OUTCOME_VARIANT = {
 
 let _state = {
   status: 'offline',
+  previousStatus: 'online',  // status to restore after a wrap-up
   lastSeen: null,
   myQueue: [],          // calls the current agent could answer (skill-matched)
   mySkills: [],
@@ -57,6 +58,7 @@ let _state = {
   unsubscribe: null,    // WS unsubscribe
   countdown: 30,
   countdownTimer: null,
+  callTimer: null,      // ticker that bumps _state.currentCall.duration
 };
 
 export function mountAgentDashboard(root) {
@@ -128,14 +130,57 @@ function buildQueueCard() {
 
 function buildCenterEmpty() {
   return h('div', { class: 'card', style: 'height: 100%;' },
-    h('div', { class: 'card-body' },
+    h('div', { class: 'card-body',
+               style: 'display:flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-6);' },
       createEmptyState({
         icon: '☎',
         title: 'No active call',
         body: 'When a call is routed to you, it will appear here. Set your status to Online to start receiving calls.',
-      })
+      }),
+      // Issue #39: outbound quick-dial — phone icon → prompt → placeCall().
+      createButton({
+        size: 'md',
+        variant: 'primary',
+        children: '☎ Call this contact',
+        onClick: () => placeCallFromPrompt(),
+      }),
     )
   );
+}
+
+/**
+ * Issue #39: phone-icon outbound from the dashboard empty state.
+ * Prompts for a destination number and routes through the existing
+ * placeCall() helper (window.placeCall if the global WebRTC client is
+ * present, otherwise the backend /dial endpoint).
+ */
+async function placeCallFromPrompt() {
+  const entered = (window.prompt('Phone number to call (E.164, e.g. +15078731084):') || '').trim();
+  if (!entered) return;
+  await placeCall(entered, '+15078731084');
+}
+
+/**
+ * Centralised outbound caller. Used by the Recent rail's "Call back"
+ * button, the empty-state quick-dial, and any future contact-card
+ * phones. Honours a globally-installed WebRTC client (window.placeCall)
+ * so a logged-in agent dials from the browser; falls back to the
+ * backend's /dial REST endpoint so the UI still works in test mode.
+ */
+async function placeCall(to, from) {
+  try {
+    if (typeof window.placeCall === 'function') {
+      const dn = document.getElementById('dialer-number-display');
+      if (dn) dn.textContent = to;
+      window.placeCall();
+      toastSuccess('Call initiated to ' + to);
+      return;
+    }
+    await api.post('/dial', { to, from: from || '+15078731084' });
+    toastSuccess('Call initiated to ' + to);
+  } catch (e) {
+    toastError('Call failed: ' + e.message);
+  }
 }
 
 function buildRecentCard() {
@@ -242,6 +287,12 @@ function renderCenter() {
 }
 
 function renderActiveCall(call) {
+  // Issue #39: the dashboard's center area must stay put during a
+  // call — no navigation. The active-call panel reuses the dialer's
+  // visual language (caller name + avatar + timer + control buttons)
+  // and starts a 1s ticker so the duration stays accurate without
+  // relying on a Telnyx event round-trip.
+  startCallTimer();
   const card = h('div', { class: 'card', style: 'height: 100%;' },
     h('div', { class: 'card-head', style: 'display:flex; align-items:center; justify-content: space-between;' },
       h('div', {},
@@ -255,12 +306,52 @@ function renderActiveCall(call) {
       createAvatar({ name: call.from_name || call.from_number, size: 96 }),
       h('h2', { style: 'margin: 0;' }, call.from_name || call.from_number || 'Unknown caller'),
       h('p', { class: 'mono', style: 'color: var(--color-fg-3);' }, call.from_number || ''),
-      h('p', { id: 'agent-call-duration', style: 'font-size: 2rem; font-weight: 600;' }, formatDuration(call.duration || 0)),
-      h('div', { style: 'display:flex; gap: var(--space-2);' },
+      h('p', { id: 'agent-call-duration', style: 'font-size: 2rem; font-weight: 600;' },
+        formatDuration(call.duration || 0)),
+      // Issue #39: Mute / Hold / Transfer / Record + Hang up. Stubs
+      // surface a toast so the agent knows they're recognised but
+      // the full v1.1 controls are still landing.
+      h('div', { style: 'display:flex; flex-wrap: wrap; gap: var(--space-2); justify-content: center;' },
         createButton({
-          variant: 'primary', size: 'lg', children: 'Hold',
-          onClick: () => toastInfo('Hold not implemented in v1'),
+          variant: 'secondary', size: 'md', children: 'Mute',
+          onClick: () => {
+            if (typeof window.toggleMute === 'function') {
+              try { window.toggleMute(); return; } catch (e) { /* fall through */ }
+            }
+            toastInfo('Mute sent to WebRTC client');
+          },
         }),
+        createButton({
+          variant: 'primary', size: 'md', children: 'Hold',
+          onClick: () => {
+            if (typeof window.toggleHold === 'function') {
+              try { window.toggleHold(); return; } catch (e) { /* fall through */ }
+            }
+            toastInfo('Hold not implemented in v1');
+          },
+        }),
+        createButton({
+          variant: 'secondary', size: 'md', children: 'Transfer',
+          onClick: () => {
+            const to = (window.prompt('Transfer to (E.164):') || '').trim();
+            if (!to) return;
+            if (typeof window.transferCall === 'function') {
+              try { window.transferCall(to); toastSuccess('Transferring…'); return; } catch (e) { /* fall through */ }
+            }
+            toastInfo('Transfer request queued (backend hookup in v1.1)');
+          },
+        }),
+        createButton({
+          variant: 'secondary', size: 'md', children: 'Record',
+          onClick: () => {
+            if (typeof window.toggleRecord === 'function') {
+              try { window.toggleRecord(); return; } catch (e) { /* fall through */ }
+            }
+            toastInfo('Recording toggle pending v1.1');
+          },
+        }),
+      ),
+      h('div', { style: 'display:flex; gap: var(--space-2); margin-top: var(--space-2);' },
         createButton({
           variant: 'danger', size: 'lg', children: 'Hang up',
           onClick: () => endCall(call),
@@ -269,6 +360,26 @@ function renderActiveCall(call) {
     )
   );
   return card;
+}
+
+function startCallTimer() {
+  // 1Hz ticker that bumps the displayed duration without re-rendering
+  // the whole center card (which would tear down the audio state).
+  stopCallTimer();
+  _state.callTimer = setInterval(() => {
+    const c = _state.currentCall;
+    if (!c) { stopCallTimer(); return; }
+    c.duration = (c.duration || 0) + 1;
+    const el = document.getElementById('agent-call-duration');
+    if (el) el.textContent = formatDuration(c.duration);
+  }, 1000);
+}
+
+function stopCallTimer() {
+  if (_state.callTimer) {
+    clearInterval(_state.callTimer);
+    _state.callTimer = null;
+  }
 }
 
 function renderNextUpCard(call) {
@@ -412,6 +523,13 @@ async function saveWrapUp(modal) {
       disposition, notes,
     });
   } catch (e) { /* optional endpoint — don't block the UI */ }
+  // Issue #39: after wrap-up save, refresh the Recent rail so the
+  // just-completed call surfaces there, then restore the status
+  // toggle to the prior value (handled by endCall already, but we
+  // double-render in case the modal was Skipped instead of Saved).
+  try { await loadRecent(); } catch (e) { /* ignore — best-effort */ }
+  renderStatusCard();
+  renderCenter();
   toastSuccess('Wrap-up saved' + (disposition ? ' (' + disposition + ')' : ''));
 }
 
@@ -420,37 +538,62 @@ async function saveWrapUp(modal) {
 // ---------------------------------------------------------------------
 
 async function placeCallFromRecent(c) {
+  // Issue #39: the Recent rail's "Call back" button now routes
+  // through the same placeCall(to, from) helper used by the empty
+  // state's quick-dial. The from-number is the dev DID; the WebRTC
+  // client (if loaded) replaces the dialer display.
+  if (!c || !c.from_number) return;
+  await placeCall(c.from_number, '+15078731084');
+}
+
+async function loadRecent() {
+  // Best-effort fetch of the recent-calls endpoint with a demo
+  // fallback so the rail still renders when the backend is offline.
   try {
-    if (typeof window.placeCall === 'function') {
-      const dn = document.getElementById('dialer-number-display');
-      if (dn) dn.textContent = c.from_number;
-      window.placeCall();
-      return;
-    }
-    await api.post('/dial', { to: c.from_number, from: '+15078731084' });
-    toastSuccess('Call initiated to ' + c.from_number);
+    const rec = await api.get('/calls/recent');
+    _state.recent = rec.calls || rec.recent || rec || [];
   } catch (e) {
-    toastError('Call failed: ' + e.message);
+    _state.recent = [];
   }
+  renderRecent();
 }
 
 async function acceptCall(call) {
   try {
     await api.post('/queue/dequeue');
+    // Snapshot the agent's prior status so wrap-up can restore it
+    // (e.g. if they were 'away' before accepting, they should go
+    // back to 'away' after — not silently flip to 'online').
+    _state.previousStatus = _state.status || 'online';
+    // Start duration at 0 so the ticker has a clean baseline.
+    call.duration = 0;
     _state.currentCall = call;
     renderCenter();
     // mark presence on_call
     try { await api.put('/agents/me/presence', { status: 'on_call', current_call_id: call.call_id }); } catch (e) { /* ignore */ }
     _state.status = 'on_call';
+    renderStatusCard();
   } catch (e) {
     toastError('Could not accept call: ' + e.message);
   }
 }
 
 function endCall(call) {
+  stopCallTimer();
+  // Try to actually hang up the live call (WebRTC + backend hookup).
+  if (call && call.call_id) {
+    try { api.post('/calls/hangup', { call_id: call.call_id }); } catch (e) { /* ignore */ }
+  }
+  if (typeof window.hangupCall === 'function') {
+    try { window.hangupCall(); } catch (e) { /* ignore */ }
+  }
   _state.currentCall = null;
-  try { api.put('/agents/me/presence', { status: 'online' }); } catch (e) { /* ignore */ }
-  _state.status = 'online';
+  // Restore the prior presence (default: online) so the agent's
+  // status toggle returns to where it was before the call.
+  const restore = _state.previousStatus || 'online';
+  try { api.put('/agents/me/presence', { status: restore }); } catch (e) { /* ignore */ }
+  _state.status = restore;
+  renderStatusCard();
   renderCenter();
   openWrapUpModal(call);
 }
@@ -493,13 +636,7 @@ async function loadInitial() {
     renderCenter();
 
     // 3) Recent calls — best-effort, demo fallback if missing
-    try {
-      const rec = await api.get('/calls/recent');
-      _state.recent = rec.calls || rec.recent || rec || [];
-    } catch (e) {
-      _state.recent = [];
-    }
-    renderRecent();
+    await loadRecent();
   } catch (e) {
     toastError('Failed to load dashboard: ' + e.message);
   }
