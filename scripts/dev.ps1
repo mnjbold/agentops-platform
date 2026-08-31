@@ -75,25 +75,37 @@ function Start-Backend {
 
     # If the default admin user already exists (from a previous run with
     # a random password), reset their password so the dev credentials
-    # stay in sync. This is dev-only.
-    $devScript = @'
-import os, sys, sqlite3, bcrypt
+    # stay in sync. This is dev-only. We write the script to a temp
+    # file rather than passing via -c (PowerShell here-strings carry
+    # their leading whitespace into the script, which breaks Python
+    # indentation).
+    $devScriptPath = Join-Path $LogDir '_dev_reset_password.py'
+    @'
+import os, sqlite3, bcrypt
 db = r"C:/Users/W3jde/local-projects/w3j-projects/telnyx/agentops-platform/backend/webhooks/agentops.db"
 new_pwd = os.environ.get("BACKEND_DEV_PASSWORD", "dev123!").encode("utf-8")
 try:
     con = sqlite3.connect(db)
-    cur = con.execute("SELECT id, password_hash FROM users WHERE tenant_id='default' AND email='admin@default.local'")
+    cur = con.execute(
+        "SELECT id, password_hash FROM users "
+        "WHERE tenant_id='default' AND email='admin@default.local'"
+    )
     row = cur.fetchone()
     if row:
         new_hash = bcrypt.hashpw(new_pwd, bcrypt.gensalt(rounds=12)).decode("utf-8")
-        con.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, row[0]))
+        con.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (new_hash, row[0]),
+        )
         con.commit()
         print("dev-reset: admin@default.local password synced to BACKEND_DEV_PASSWORD")
+    else:
+        print("dev-reset: no existing admin user (server will seed on first boot)")
     con.close()
 except Exception as e:
     print("dev-reset: skipped (", e, ")")
-'@
-    & $venvPython -c $devScript 2>&1 | ForEach-Object { Write-Host "  $_" }
+'@ | Set-Content -Path $devScriptPath -Encoding UTF8
+    & $venvPython $devScriptPath 2>&1 | ForEach-Object { Write-Host "  $_" }
 
     Write-Host "==> Starting backend on port $BackendPort (logs: $LogDir\backend.log)" -ForegroundColor Cyan
     $arg = '-m webhooks.server --host 127.0.0.1 --port ' + $BackendPort + ' --reload'
