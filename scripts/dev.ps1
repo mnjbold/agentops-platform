@@ -135,8 +135,13 @@ function Start-Frontend {
         Pop-Location
     }
     Write-Host "==> Starting frontend on port $FrontendPort (logs: $LogDir\frontend.log)" -ForegroundColor Cyan
+    # On Windows, `npm` is a `.cmd` shim. `Start-Process -FilePath 'npm'`
+    # fails with "%1 is not a valid Win32 application" because it picks
+    # up a 0-byte stub. Use `npm.cmd` explicitly.
+    $npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
+    if (-not $npmCmd) { $npmCmd = 'npm.cmd' }
     $proc = Start-Process `
-        -FilePath 'npm' `
+        -FilePath $npmCmd `
         -ArgumentList 'run','dev','--','--host','127.0.0.1','--port',$FrontendPort `
         -WorkingDirectory $FrontendDir `
         -RedirectStandardOutput (Join-Path $LogDir 'frontend.log') `
