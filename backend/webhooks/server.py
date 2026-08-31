@@ -458,6 +458,15 @@ try:
 except Exception as _exc:  # pragma: no cover
     log.warning("Phase E queue router not mounted yet: %s", _exc)
 
+# Phase E-B #40 — skill routing admin. Mounted alongside queue so the
+# editor's skill dropdown and the dashboard's chips can fetch /api/skills
+# in a single request.
+try:
+    from webhooks.skills import router as skills_router
+    app.include_router(skills_router)
+except Exception as _exc:  # pragma: no cover
+    log.warning("Phase E-B skills router not mounted: %s", _exc)
+
 # Phase D #26 + #27 — Meetings (Daily.co) + Email (provider-agnostic).
 try:
     from webhooks.meetings import router as meetings_router

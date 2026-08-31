@@ -97,13 +97,24 @@ async def enqueue(request: Request) -> dict:
     if not call_id:
         raise HTTPException(400, "call_id is required")
     skill_tags = _parse_skill_tags(body.get("skill_tags"))
+    # Issue #40: a single primary ``skill`` (string) is merged into
+    # skill_tags so the existing match logic continues to work without
+    # a code change.
+    primary_skill = (body.get("skill") or "").strip()
+    if primary_skill and primary_skill not in skill_tags:
+        skill_tags.append(primary_skill)
     try:
         priority = int(body.get("priority") or 0)
     except (TypeError, ValueError):
         priority = 0
     tid = _tenant_id(request)
     store = get_store()
-    row = store.enqueue_call(tid, call_id, skill_tags=skill_tags, priority=priority)
+    row = store.enqueue_call(
+        tid, call_id,
+        skill_tags=skill_tags,
+        priority=priority,
+        skill=primary_skill or None,
+    )
     pos = store.get_queue_position(tid, call_id) or {"position": 1, "ahead": 0, "eta_s": 0}
     return {
         "ok": True,
@@ -169,26 +180,35 @@ def position(call_id: str, request: Request) -> dict:
 
 
 @router.get("/stats")
-def stats(request: Request) -> dict:
-    """Return ``{waiting, longest_wait_s, abandoned_today, answered_today}``."""
-    tid = _tenant_id(request)
-    store = get_store()
-    return {"ok": True, **store.get_queue_stats(tid)}
+def stats(request: Request, skill: Optional[str] = None) -> dict:
+    """Return ``{waiting, longest_wait_s, abandoned_today, answered_today}``.
 
-
-@router.get("/list")
-def list_q(request: Request, status: Optional[str] = None) -> dict:
-    """List queue rows for the tenant (debug + dashboard widget).
-
-    Optional ``?status=queued|assigned|answered|abandoned`` filter.
+    Optional ``?skill=sales`` filter — only counts rows whose
+    ``skill_tags`` contains the skill. Issue #40.
     """
     tid = _tenant_id(request)
     store = get_store()
-    rows = store.list_queue(tid, status=status)
+    return {"ok": True, "skill": skill, **store.get_queue_stats(tid, skill=skill)}
+
+
+@router.get("/list")
+def list_q(
+    request: Request,
+    status: Optional[str] = None,
+    skill: Optional[str] = None,
+) -> dict:
+    """List queue rows for the tenant (debug + dashboard widget).
+
+    Optional ``?status=queued|assigned|answered|abandoned`` filter and
+    ``?skill=sales`` filter (issue #40).
+    """
+    tid = _tenant_id(request)
+    store = get_store()
+    rows = store.list_queue(tid, status=status, skill=skill)
     # Decode skill_tags JSON for the response.
     for r in rows:
         try:
             r["skill_tags"] = json.loads(r.get("skill_tags_json") or "[]")
         except json.JSONDecodeError:
             r["skill_tags"] = []
-    return {"ok": True, "count": len(rows), "items": rows}
+    return {"ok": True, "count": len(rows), "skill": skill, "items": rows}

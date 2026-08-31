@@ -599,6 +599,48 @@ CREATE TABLE IF NOT EXISTS network_quality_log (
 );
 CREATE INDEX IF NOT EXISTS idx_nq_tenant ON network_quality_log(tenant_id, timestamp);
 
+-- ────────────── Phase E-B Skill Routing (issue #40) ─────────────────────
+-- #40 — Named skill groups used by the call router as a fallback target
+-- when no agent with the matching skill is online. The ``name`` is the
+-- case-insensitive skill tag the workflow editor binds to a node
+-- (e.g. "sales", "support"). ``fallback_user_id`` is the user who
+-- should receive a misrouted call when no qualified agent is online
+-- (NULL = drop to the queue, no fallback).
+CREATE TABLE IF NOT EXISTS skill_routing (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    description      TEXT,
+    fallback_user_id TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE (tenant_id, name),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_skill_routing_tenant
+    ON skill_routing(tenant_id);
+
+-- ────────────── Phase E-B Supervisor Sessions (issues #41-#43) ────────
+-- #41, #42, #43 — supervisor audio-routing sessions on a call. One row
+-- per (call, supervisor, mode). ``mode`` is monitor | whisper | barge.
+-- ``joined_at`` / ``left_at`` bracket the session; NULL ``left_at`` means
+-- the supervisor is currently on the call.
+CREATE TABLE IF NOT EXISTS supervisor_sessions (
+    id                   TEXT PRIMARY KEY,
+    tenant_id            TEXT NOT NULL,
+    call_id              TEXT NOT NULL,
+    supervisor_user_id   TEXT NOT NULL,
+    mode                 TEXT NOT NULL CHECK(mode IN ('monitor','whisper','barge')),
+    joined_at            TEXT NOT NULL,
+    left_at              TEXT,
+    created_at           TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_sup_sessions_call
+    ON supervisor_sessions(tenant_id, call_id);
+CREATE INDEX IF NOT EXISTS idx_sup_sessions_active
+    ON supervisor_sessions(tenant_id, left_at);
+
 -- ────────────── Phase E Live Agent v1 (issues #31, #32, #34) ─────────────
 -- #31 — Agent presence: one row per (tenant, user). `status` is the
 -- v1 enum online | away | busy | on_call | offline. `last_seen` is the
@@ -3229,7 +3271,13 @@ class Store:
         tenant_id: str,
         skill: Optional[str] = None,
     ) -> Optional[dict]:
-        """Return the longest-idle 'online' user (or first matching skill)."""
+        """Return the longest-idle 'online' user (or first matching skill).
+
+        When ``skill`` is provided and no agent with that skill is
+        online, fall back to the user configured in ``skill_routing`` for
+        this tenant + skill (if they're online). If even the fallback is
+        offline, returns ``None`` — the caller's next step is the queue.
+        """
         params: list[Any] = [tenant_id]
         skill_clause = ""
         if skill:
@@ -3250,7 +3298,32 @@ class Store:
             f"{skill_clause} "
             "ORDER BY p.last_seen ASC LIMIT 1"
         )
-        return self._row(sql, tuple(params))
+        direct = self._row(sql, tuple(params))
+        if direct is not None:
+            return direct
+        if not skill:
+            return None
+        # Skill-routing fallback (#40): when the desired skill has no
+        # qualified online agent, the skill_routing row may point at a
+        # fallback user. If they're online, return them.
+        routing = self._row(
+            "SELECT fallback_user_id FROM skill_routing "
+            "WHERE tenant_id = ? AND LOWER(name) = LOWER(?)",
+            (tenant_id, skill),
+        )
+        if not routing or not routing.get("fallback_user_id"):
+            return None
+        fid = routing["fallback_user_id"]
+        return self._row(
+            "SELECT p.tenant_id, p.user_id, p.status, p.last_seen, "
+            "       p.current_call_id, p.updated_at, "
+            "       u.email, u.role, u.assigned_number, u.display_name "
+            "FROM agent_presence p "
+            "LEFT JOIN users u ON u.tenant_id = p.tenant_id AND u.id = p.user_id "
+            "WHERE p.tenant_id = ? AND p.status = 'online' AND p.user_id = ? "
+            "ORDER BY p.last_seen ASC LIMIT 1",
+            (tenant_id, fid),
+        )
 
     # ───────────────────── #31 Agent skills ────────────────────────
     def set_user_skills(
@@ -3306,6 +3379,184 @@ class Store:
             (tenant_id,),
         )
 
+    # ───────────────────── #40 Skill routing ─────────────────────────
+    def create_skill_routing(
+        self,
+        tenant_id: str,
+        name: str,
+        description: Optional[str] = None,
+        fallback_user_id: Optional[str] = None,
+    ) -> dict:
+        """Create a named skill-routing group. Idempotent on (tenant, name)."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name is required")
+        with self._lock:
+            existing = self._row(
+                "SELECT id FROM skill_routing "
+                "WHERE tenant_id = ? AND LOWER(name) = LOWER(?)",
+                (tenant_id, name),
+            )
+            if existing:
+                return self.get_skill_routing(tenant_id, existing["id"])  # type: ignore[return-value]
+            rid = _new_id("sk")
+            self._conn.execute(
+                "INSERT INTO skill_routing(id, tenant_id, name, description, "
+                "fallback_user_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (rid, tenant_id, name, description, fallback_user_id, now, now),
+            )
+        return self.get_skill_routing(tenant_id, rid)  # type: ignore[return-value]
+
+    def list_skill_routing(self, tenant_id: str) -> list[dict]:
+        return self._rows(
+            "SELECT * FROM skill_routing WHERE tenant_id = ? ORDER BY name",
+            (tenant_id,),
+        )
+
+    def get_skill_routing(self, tenant_id: str, routing_id: str) -> Optional[dict]:
+        return self._row(
+            "SELECT * FROM skill_routing WHERE tenant_id = ? AND id = ?",
+            (tenant_id, routing_id),
+        )
+
+    def update_skill_routing(
+        self,
+        tenant_id: str,
+        routing_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        fallback_user_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        existing = self.get_skill_routing(tenant_id, routing_id)
+        if not existing:
+            return None
+        new_name = (name or existing.get("name") or "").strip()
+        new_desc = description if description is not None else existing.get("description")
+        new_fb = fallback_user_id if fallback_user_id is not None else existing.get("fallback_user_id")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE skill_routing SET name = ?, description = ?, "
+                "fallback_user_id = ?, updated_at = ? "
+                "WHERE tenant_id = ? AND id = ?",
+                (new_name, new_desc, new_fb, now, tenant_id, routing_id),
+            )
+        return self.get_skill_routing(tenant_id, routing_id)
+
+    def delete_skill_routing(self, tenant_id: str, routing_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM skill_routing WHERE tenant_id = ? AND id = ?",
+                (tenant_id, routing_id),
+            )
+            return cur.rowcount > 0
+
+    # ───────────────────── #41-#43 Supervisor sessions ──────────────────
+    def start_supervisor_session(
+        self,
+        tenant_id: str,
+        call_id: str,
+        supervisor_user_id: str,
+        mode: str,
+    ) -> dict:
+        """Record a new supervisor audio-routing session. ``mode`` is one
+        of ``monitor | whisper | barge``.
+
+        If a session for the same ``(call_id, supervisor_user_id, mode)``
+        is already active (no ``left_at``), returns it idempotently
+        instead of creating a duplicate.
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        valid = {"monitor", "whisper", "barge"}
+        if mode not in valid:
+            raise ValueError(f"mode must be one of {sorted(valid)} (got {mode!r})")
+        with self._lock:
+            existing = self._row(
+                "SELECT * FROM supervisor_sessions "
+                "WHERE tenant_id = ? AND call_id = ? "
+                "  AND supervisor_user_id = ? AND mode = ? AND left_at IS NULL "
+                "ORDER BY joined_at DESC LIMIT 1",
+                (tenant_id, call_id, supervisor_user_id, mode),
+            )
+            if existing:
+                return existing
+            sid = _new_id("sup")
+            self._conn.execute(
+                "INSERT INTO supervisor_sessions(id, tenant_id, call_id, "
+                "supervisor_user_id, mode, joined_at, left_at, created_at) "
+                "VALUES (?,?,?,?,?,?,NULL,?)",
+                (sid, tenant_id, call_id, supervisor_user_id, mode, now, now),
+            )
+        return self._row(
+            "SELECT * FROM supervisor_sessions WHERE id = ?", (sid,)
+        )  # type: ignore[return-value]
+
+    def end_supervisor_session(
+        self, tenant_id: str, session_id: str
+    ) -> Optional[dict]:
+        """Close the given session (set ``left_at = now``). Idempotent."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE supervisor_sessions SET left_at = ? "
+                "WHERE tenant_id = ? AND id = ? AND left_at IS NULL",
+                (now, tenant_id, session_id),
+            )
+        return self._row(
+            "SELECT * FROM supervisor_sessions WHERE id = ?", (session_id,)
+        )
+
+    def end_supervisor_sessions_for_call(
+        self, tenant_id: str, call_id: str
+    ) -> int:
+        """Hangup hook: close every open session for the call. Idempotent."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE supervisor_sessions SET left_at = ? "
+                "WHERE tenant_id = ? AND call_id = ? AND left_at IS NULL",
+                (now, tenant_id, call_id),
+            )
+            return cur.rowcount
+
+    def list_active_supervisor_sessions(
+        self, tenant_id: str, call_id: Optional[str] = None
+    ) -> list[dict]:
+        """All sessions currently open. Optionally filtered by call_id."""
+        if call_id:
+            return self._rows(
+                "SELECT * FROM supervisor_sessions "
+                "WHERE tenant_id = ? AND call_id = ? AND left_at IS NULL "
+                "ORDER BY joined_at DESC",
+                (tenant_id, call_id),
+            )
+        return self._rows(
+            "SELECT * FROM supervisor_sessions "
+            "WHERE tenant_id = ? AND left_at IS NULL "
+            "ORDER BY joined_at DESC",
+            (tenant_id,),
+        )
+
+    def list_supervisor_sessions_for_call(
+        self, tenant_id: str, call_id: str, include_closed: bool = False,
+    ) -> list[dict]:
+        where = "tenant_id = ? AND call_id = ?"
+        if not include_closed:
+            where += " AND left_at IS NULL"
+        return self._rows(
+            f"SELECT * FROM supervisor_sessions WHERE {where} "
+            "ORDER BY joined_at DESC",
+            (tenant_id, call_id),
+        )
+
     # ───────────────────── #32 Call queue ──────────────────────────
     def enqueue_call(
         self,
@@ -3313,15 +3564,23 @@ class Store:
         call_id: str,
         skill_tags: Optional[list] = None,
         priority: int = 0,
+        skill: Optional[str] = None,
     ) -> dict:
         """Append a call to the queue. Idempotent on (tenant_id,
-        call_id, status='queued')."""
+        call_id, status='queued').
+
+        ``skill`` (issue #40) is a single primary skill label for the
+        call — it is merged into ``skill_tags`` so the existing tag
+        intersection logic keeps working without code changes.
+        """
         if not isinstance(priority, int):
             try:
                 priority = int(priority)
             except (TypeError, ValueError):
                 priority = 0
         tags = skill_tags if isinstance(skill_tags, list) else []
+        if skill and isinstance(skill, str) and skill.strip() and skill.strip() not in tags:
+            tags.append(skill.strip())
         tags_json = json.dumps(tags)
         now = _utcnow()
         with self._lock:
@@ -3411,15 +3670,25 @@ class Store:
         n_ahead = int((ahead or {}).get("n") or 0)
         return {"position": n_ahead + 1, "ahead": n_ahead, "eta_s": n_ahead * 30}
 
-    def get_queue_stats(self, tenant_id: str) -> dict:
-        """Counts for the queue dashboard tile."""
+    def get_queue_stats(self, tenant_id: str, skill: Optional[str] = None) -> dict:
+        """Counts for the queue dashboard tile. When ``skill`` is
+        provided, only counts queue rows whose ``skill_tags_json``
+        contains that skill (case-insensitive). Issue #40."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         today = now.date().isoformat()
+        params: list[Any] = [tenant_id]
+        skill_clause = ""
+        if skill:
+            skill_clause = (
+                " AND EXISTS (SELECT 1 FROM json_each(skill_tags_json) j "
+                "            WHERE LOWER(j.value) = LOWER(?))"
+            )
+            params.append(skill)
         oldest = self._row(
             "SELECT MIN(enqueued_at) AS oldest FROM call_queue "
-            "WHERE tenant_id = ? AND status = 'queued'",
-            (tenant_id,),
+            "WHERE tenant_id = ? AND status = 'queued'" + skill_clause,
+            tuple(params),
         )
         longest_wait_s = 0
         oldest_iso = (oldest or {}).get("oldest")
@@ -3433,20 +3702,28 @@ class Store:
                 pass
         waiting_row = self._row(
             "SELECT COUNT(*) AS n FROM call_queue "
-            "WHERE tenant_id = ? AND status IN ('queued','assigned')",
-            (tenant_id,),
+            "WHERE tenant_id = ? AND status IN ('queued','assigned')" + skill_clause,
+            tuple(params),
         )
+        abandoned_params: list[Any] = [tenant_id, today]
+        abandoned_clause = skill_clause
+        if skill:
+            abandoned_clause = (
+                " AND EXISTS (SELECT 1 FROM json_each(skill_tags_json) j "
+                "            WHERE LOWER(j.value) = LOWER(?))"
+            )
+            abandoned_params = [tenant_id, skill, today]
         abandoned_today = self._row(
             "SELECT COUNT(*) AS n FROM call_queue "
             "WHERE tenant_id = ? AND status = 'abandoned' "
-            "       AND enqueued_at >= ?",
-            (tenant_id, today),
+            "       AND enqueued_at >= ?" + abandoned_clause,
+            tuple(abandoned_params),
         )
         answered_today = self._row(
             "SELECT COUNT(*) AS n FROM call_queue "
             "WHERE tenant_id = ? AND status = 'answered' "
-            "       AND enqueued_at >= ?",
-            (tenant_id, today),
+            "       AND enqueued_at >= ?" + abandoned_clause,
+            tuple(abandoned_params),
         )
         return {
             "waiting": int((waiting_row or {}).get("n") or 0),
@@ -3498,12 +3775,23 @@ class Store:
             (tenant_id, call_id),
         )
 
-    def list_queue(self, tenant_id: str, status: Optional[str] = None) -> list[dict]:
+    def list_queue(
+        self,
+        tenant_id: str,
+        status: Optional[str] = None,
+        skill: Optional[str] = None,
+    ) -> list[dict]:
         where = "tenant_id = ?"
         params: list[Any] = [tenant_id]
         if status:
             where += " AND status = ?"
             params.append(status)
+        if skill:
+            where += (
+                " AND EXISTS (SELECT 1 FROM json_each(skill_tags_json) j "
+                "            WHERE LOWER(j.value) = LOWER(?))"
+            )
+            params.append(skill)
         return self._rows(
             f"SELECT * FROM call_queue WHERE {where} "
             "ORDER BY priority DESC, enqueued_at ASC",

@@ -59,6 +59,12 @@ let _state = {
   countdown: 30,
   countdownTimer: null,
   callTimer: null,      // ticker that bumps _state.currentCall.duration
+  // Issue #40: skill groups (loaded from /api/skills) and the chip the
+  // user picked to filter the queue. ``activeSkillFilter === null``
+  // means "all skills".
+  skillGroups: [],          // [{id, name, online_agents_with_skill, fallback_user_id}, ...]
+  activeSkillFilter: null,  // string|null
+  isAdmin: false,           // + Add skill button visibility
 };
 
 export function mountAgentDashboard(root) {
@@ -119,9 +125,13 @@ function buildStatusCard() {
 
 function buildQueueCard() {
   return h('div', { class: 'card', style: 'margin-top: var(--space-4);' },
-    h('div', { class: 'card-head' },
-      h('h3', {}, 'Calls waiting in my queue'),
+    h('div', { class: 'card-head',
+               style: 'display:flex; align-items:center; justify-content: space-between;' },
+      h('h3', { style: 'margin: 0;' }, 'Calls waiting in my queue'),
+      h('div', { id: 'agent-skill-actions' }),
     ),
+    h('div', { class: 'card-body', id: 'agent-skill-chips',
+               style: 'padding-top: 0; padding-bottom: var(--space-2);' }),
     h('div', { class: 'card-body', id: 'agent-queue-body' },
       h('div', { style: 'color: var(--color-fg-3);' }, 'Loading…'),
     )
@@ -245,13 +255,17 @@ function renderStatusCard() {
 }
 
 function renderQueueCard() {
+  // Issue #40: skill chip filter + filtered queue list.
+  renderSkillChips();
   const body = document.getElementById('agent-queue-body');
   if (!body) return;
   body.innerHTML = '';
   const q = _state.myQueue;
   if (!q.length) {
     body.append(h('p', { style: 'color: var(--color-fg-3); font-size: var(--text-sm); margin: 0;' },
-      'No calls waiting for you right now.'));
+      _state.activeSkillFilter
+        ? 'No ' + _state.activeSkillFilter + ' calls waiting right now.'
+        : 'No calls waiting for you right now.'));
     return;
   }
   for (const c of q.slice(0, 5)) {
@@ -265,6 +279,151 @@ function renderQueueCard() {
       ),
     );
     body.append(row);
+  }
+}
+
+/**
+ * Issue #40: render one chip per skill-routing group + a synthetic
+ * "All" chip. Clicking a chip sets ``_state.activeSkillFilter`` and
+ * re-filters the queue list (and the center "Next up" card). The
+ * dropdown to add a new skill is admin-only.
+ */
+function renderSkillChips() {
+  const chipsEl = document.getElementById('agent-skill-chips');
+  const actionsEl = document.getElementById('agent-skill-actions');
+  if (!chipsEl || !actionsEl) return;
+  chipsEl.innerHTML = '';
+  actionsEl.innerHTML = '';
+  const groups = _state.skillGroups || [];
+  if (!groups.length && !_state.isAdmin) {
+    // No chips + no add button = nothing to show. Leave the section empty.
+    return;
+  }
+  // "All" chip resets the filter
+  const allChip = createBadge({
+    variant: _state.activeSkillFilter == null ? 'accent' : 'neutral',
+    children: 'All',
+    size: 'sm',
+  });
+  allChip.style.cursor = 'pointer';
+  allChip.addEventListener('click', () => {
+    _state.activeSkillFilter = null;
+    renderQueueCard();
+  });
+  chipsEl.append(allChip);
+  for (const g of groups) {
+    const isActive = (_state.activeSkillFilter || '').toLowerCase() === (g.name || '').toLowerCase();
+    const chip = createBadge({
+      variant: isActive ? 'accent' : 'neutral',
+      children: (g.name || '?') + (g.online_agents_with_skill ? ' · ' + g.online_agents_with_skill : ''),
+      size: 'sm',
+    });
+    chip.style.cursor = 'pointer';
+    chip.title = g.description || (g.online_agents_with_skill ? g.online_agents_with_skill + ' online' : 'No online agents');
+    chip.addEventListener('click', () => {
+      _state.activeSkillFilter = isActive ? null : g.name;
+      renderQueueCard();
+    });
+    chipsEl.append(chip);
+  }
+  if (_state.isAdmin) {
+    const addBtn = createButton({
+      size: 'sm', variant: 'ghost', children: '+ Add skill',
+      onClick: () => openAddSkillModal(),
+    });
+    actionsEl.append(addBtn);
+  }
+}
+
+/**
+ * Issue #40: small modal to create a new skill-routing group. Closes
+ * on save and refreshes the chip list.
+ */
+function openAddSkillModal() {
+  let name = '', description = '';
+  const body = h('div', {},
+    h('p', { style: 'margin: 0 0 var(--space-3); color: var(--color-fg-2);' },
+      'Create a new skill-routing group. Calls that ask for this skill will be routed to qualified agents first, then to the fallback user if set.'),
+    h('div', { id: 'add-skill-name' }),
+    h('div', { id: 'add-skill-desc', style: 'margin-top: var(--space-3);' }),
+  );
+  const modal = createModal({
+    title: 'Add skill group',
+    body,
+    footer: h('div', { style: 'display:flex; justify-content: flex-end; gap: 8px;' },
+      createButton({ variant: 'ghost', children: 'Cancel', onClick: () => modal.close() }),
+      createButton({
+        variant: 'primary', children: 'Save',
+        onClick: async () => {
+          try {
+            await api.post('/admin/skills', {
+              name: name.trim(),
+              description: description.trim(),
+            });
+            modal.close();
+            await loadSkillGroups();
+            renderQueueCard();
+            toastSuccess('Skill group added');
+          } catch (e) {
+            toastError('Add skill failed: ' + e.message);
+          }
+        },
+      }),
+    ),
+  });
+  // Lazy-mount inputs to keep this file dependency-light
+  const { createInput, createTextarea } = (() => {
+    try {
+      return {
+        createInput: (window.AgentopsUI || {}).createInput || ((opts) => {
+          const wrap = document.createElement('label');
+          wrap.style.display = 'block';
+          if (opts.label) wrap.append(Object.assign(document.createElement('span'), {
+            textContent: opts.label, style: 'display:block; font-size: var(--text-sm); margin-bottom: 4px;',
+          }));
+          const inp = Object.assign(document.createElement('input'), {
+            type: 'text', value: opts.value || '', placeholder: opts.placeholder || '',
+          });
+          inp.style.cssText = 'width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--color-line); background: var(--color-bg-1); color: var(--color-fg-1);';
+          inp.addEventListener('input', () => { name = inp.value; });
+          wrap.append(inp);
+          return wrap;
+        }),
+        createTextarea: (opts) => {
+          const wrap = document.createElement('label');
+          wrap.style.display = 'block';
+          if (opts.label) wrap.append(Object.assign(document.createElement('span'), {
+            textContent: opts.label, style: 'display:block; font-size: var(--text-sm); margin-bottom: 4px;',
+          }));
+          const ta = Object.assign(document.createElement('textarea'), {
+            value: opts.value || '', placeholder: opts.placeholder || '', rows: opts.rows || 3,
+          });
+          ta.style.cssText = 'width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--color-line); background: var(--color-bg-1); color: var(--color-fg-1);';
+          ta.addEventListener('input', () => { description = ta.value; });
+          wrap.append(ta);
+          return wrap;
+        },
+      };
+    } catch (e) { return { createInput: null, createTextarea: null }; }
+  })();
+  body.querySelector('#add-skill-name').append(createInput({
+    label: 'Skill name', placeholder: 'e.g. billing',
+  }));
+  body.querySelector('#add-skill-desc').append(createTextarea({
+    label: 'Description (optional)', rows: 2, placeholder: 'What does this team handle?',
+  }));
+  modal.open();
+}
+
+async function loadSkillGroups() {
+  // Issue #40: fetch /api/skills so the left rail's chip filter + add
+  // button are wired. Best-effort: a missing endpoint shouldn't break
+  // the dashboard (e.g. when the backend is offline).
+  try {
+    const res = await api.get('/skills');
+    _state.skillGroups = res.items || [];
+  } catch (e) {
+    _state.skillGroups = [];
   }
 }
 
@@ -611,15 +770,30 @@ async function loadInitial() {
       _state.status = me.status || 'offline';
       _state.lastSeen = me.last_seen;
       _state.mySkills = me.skills || [];
+      // Issue #44 (forward-looking): the role field is on the roster
+      // entry; we treat 'admin' + 'supervisor' as privileged. #40 only
+      // needs the add-skill button gated.
+      _state.isAdmin = ['admin', 'supervisor'].includes((me.role || '').toLowerCase());
     }
     renderStatusCard();
 
-    // 2) Queue — calls that match my skills
+    // 1b) Issue #40: skill groups for the left rail chip filter.
+    await loadSkillGroups();
+
+    // 2) Queue — calls that match my skills, with the active skill
+    // filter (if any) narrowing further.
     try {
       const mySkillNames = (_state.mySkills || []).map(s => (s.skill || '').toLowerCase()).filter(Boolean);
-      const q = await api.get('/queue/list');
+      const filterParam = _state.activeSkillFilter
+        ? '?skill=' + encodeURIComponent(_state.activeSkillFilter)
+        : '';
+      const q = await api.get('/queue/list' + filterParam);
       const all = q.items || q.queue || [];
       _state.myQueue = (all || []).filter(c => {
+        if (_state.activeSkillFilter) {
+          const tags = (c.skill_tags || []).map(t => (t || '').toLowerCase());
+          if (!tags.includes(_state.activeSkillFilter.toLowerCase())) return false;
+        }
         if (!mySkillNames.length) return true;
         const tags = (c.skill_tags || []).map(t => (t || '').toLowerCase());
         return tags.some(t => mySkillNames.includes(t));
