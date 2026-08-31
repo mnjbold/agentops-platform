@@ -1,6 +1,8 @@
 """Workflow engine tests (issue #13)."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 
@@ -139,3 +141,82 @@ def test_workflow_assign_to_number(client, store):
                     headers={"X-Tenant-Id": "default"})
     assert r.status_code == 200
     assert r.json()["number"]["assignment_kind"] is None
+
+
+def test_workflow_forward_agent_routes_to_online_agent(client, store, monkeypatch):
+    """Issue #38: forward_agent picks an online agent with a matching
+    skill, flips their presence to ``on_call``, and calls
+    ``transfer_call`` on the Telnyx client with the agent's
+    ``assigned_number``.
+    """
+    import bcrypt
+    from webhooks import workflow_engine
+
+    # 1. Seed: an agent user with the 'sales' skill, an assigned
+    #    direct-DID, and an 'online' presence row.
+    ph = bcrypt.hashpw(b"pw", bcrypt.gensalt(rounds=4)).decode("utf-8")
+    store.create_user("u_alice", "default", "alice@default.local", ph, "agent")
+    store.update_user_agent(
+        "default", "u_alice", assigned_number="+15078731099",
+    )
+    store.set_user_skills("default", "u_alice", ["sales"])
+    store.upsert_presence("default", "u_alice", "online")
+
+    # 2. Mock the Telnyx client: ``transfer_call`` and (optionally)
+    #    ``playback_start`` become MagicMocks so the engine's
+    #    best-effort calls are no-ops.
+    mock_client = MagicMock()
+    mock_client.transfer_call.return_value = {"ok": True}
+
+    def _fake_get_client():
+        return mock_client
+    monkeypatch.setattr(workflow_engine, "get_client", _fake_get_client)
+
+    # 3. Create a workflow with a single forward_agent node bound to
+    #    the 'sales' skill (the new ``data.skill`` shape).
+    graph = {
+        "entry_node_id": "fa",
+        "nodes": [
+            {"id": "fa", "type": "forward_agent", "data": {"skill": "sales"}},
+        ],
+        "edges": [],
+    }
+    r = client.post(
+        "/api/workflows",
+        json={"name": "FA-Sales", "graph": graph},
+        headers={"X-Tenant-Id": "default"},
+    )
+    assert r.status_code == 200, r.text
+    wid = r.json()["workflow"]["id"]
+
+    # 4. Run the engine directly (not via the dry-run /test endpoint,
+    #    which would short-circuit the client call).
+    wf = store.get_workflow("default", wid)
+    ctx = workflow_engine.CallContext({
+        "call_id": "test-call-1",
+        "tenant_id": "default",
+        "from": "+15555550100",
+        "to": "+15078731084",
+    })
+    engine = workflow_engine.WorkflowEngine(wf["graph"], client=mock_client)
+    engine.run(ctx)
+
+    # 5. The agent's presence flipped to on_call with the call id.
+    pres = store.get_presence("default", "u_alice")
+    assert pres is not None
+    assert pres["status"] == "on_call"
+    assert pres["current_call_id"] == "test-call-1"
+
+    # 6. The Telnyx client's transfer_call was invoked with the
+    #    agent's assigned number + the call's control id.
+    mock_client.transfer_call.assert_called_once()
+    args, kwargs = mock_client.transfer_call.call_args
+    assert kwargs.get("call_control_id") == "test-call-1"
+    assert kwargs.get("to") == "+15078731099"
+
+    # 7. The history captured the forward so the UI timeline can render it.
+    actions = [h.get("action") for h in ctx.history]
+    assert "forward_agent" in actions
+    fwd = next(h for h in ctx.history if h.get("action") == "forward_agent")
+    assert fwd.get("result") == "forwarded"
+    assert fwd.get("to_user") == "u_alice"

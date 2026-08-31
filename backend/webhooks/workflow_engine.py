@@ -47,6 +47,13 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["workflows"])
 
+# Hold-music URL for the forward_agent node when no agent is online.
+# In a real deployment this should be a Telnyx-uploaded media URL so the
+# caller hears music while they wait in the queue. v1 ships with a
+# placeholder; the v1.1 release will switch to a tenant-configurable
+# asset uploaded via POST /api/media.
+HOLD_MUSIC_URL = "https://example.com/hold-music.mp3"
+
 # Templates live next to this file. Loaded once at import time and
 # exposed by ``/api/workflows/templates``.
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "workflow_templates"
@@ -196,6 +203,10 @@ class CallContext(dict):
         return self.get("call_id")
 
     @property
+    def tenant_id(self) -> Optional[str]:
+        return self.get("tenant_id")
+
+    @property
     def history(self) -> list[dict]:
         return self.setdefault("history", [])
 
@@ -312,12 +323,75 @@ class WorkflowEngine:
         return None
 
     def _node_forward_agent(self, node: dict, ctx: CallContext) -> Optional[str]:
-        # We don't yet have a real agent-presence system; the engine
-        # records the intent and ends the call (the assignment +
-        # a Telnyx 'enqueue' verb would replace this in a real
-        # deployment). The shape of the params is what the UI binds.
+        """Phase E-A #38: route the call to an idle online agent with
+        an optional skill match, or enqueue + play hold music if no
+        agent is free.
+
+        The node shape mirrors what the UI binds:
+            { "type": "forward_agent",
+              "data":  { "skill": "sales" },   # preferred (new)
+              "params": { "skill": "sales" } } # backward-compat
+        The ``data.skill`` key wins when both are present. ``skill``
+        may be None/empty to mean "any available agent".
+        """
+        data = node.get("data") or {}
         params = node.get("params") or {}
-        ctx.push(node["id"], "forward_agent", skill=params.get("skill"))
+        skill = data.get("skill") or params.get("skill") or None
+        tid = ctx.tenant_id or "default"
+        store = get_store()
+        try:
+            agent = store.find_idle_online_agent(tid, skill=skill)
+        except Exception as e:
+            log.warning("find_idle_online_agent failed: %s", e)
+            agent = None
+        if agent is None:
+            # No agent available — enqueue the call + play hold music.
+            try:
+                store.enqueue_call(
+                    tenant_id=tid,
+                    call_id=ctx.call_id or f"call-{ctx.get('to') or 'unknown'}",
+                    skill_tags=[skill] if skill else [],
+                )
+            except Exception as e:
+                log.warning("enqueue_call failed: %s", e)
+            if not self.dry_run and self.client is not None and ctx.call_id:
+                # Best-effort: play a "please hold" prompt while the
+                # caller waits. The hold-music URL is a placeholder;
+                # v1.1 will swap in a tenant-uploaded Telnyx media
+                # asset so callers hear real music.
+                try:
+                    if hasattr(self.client, "playback_start"):
+                        self.client.playback_start(
+                            ctx.call_id, audio_url=HOLD_MUSIC_URL,
+                        )
+                except Exception as e:
+                    log.debug("playback_start failed (non-fatal): %s", e)
+            ctx.push(node["id"], "forward_agent",
+                     result="queued", skill=skill)
+            return None
+        # Agent is available — flip them to on_call and transfer the call.
+        try:
+            store.upsert_presence(
+                tid, agent["user_id"], "on_call",
+                current_call_id=ctx.call_id,
+            )
+        except Exception as e:
+            log.warning("upsert_presence on_call failed: %s", e)
+        dest = agent.get("assigned_number") or agent.get("phone") or ""
+        if not self.dry_run and self.client is not None and ctx.call_id and dest:
+            try:
+                self.client.transfer_call(
+                    call_control_id=ctx.call_id,
+                    to=dest,
+                    from_=ctx.get("to") or None,
+                )
+            except Exception as e:
+                log.warning("transfer_call failed: %s", e)
+        ctx.push(node["id"], "forward_agent",
+                 result="forwarded",
+                 to_user=agent.get("user_id"),
+                 to_number=dest,
+                 skill=skill)
         return None
 
     def _node_voicemail(self, node: dict, ctx: CallContext) -> Optional[str]:
@@ -593,6 +667,7 @@ async def test_workflow(
         raise HTTPException(404, f"workflow {workflow_id} not found")
     ctx = CallContext({
         "call_id": body.get("call_id") or "test-call",
+        "tenant_id": _tenant_id(request),
         "from": body.get("from") or "+15555550100",
         "to": body.get("to") or "+15078731084",
         "digits_pressed": body.get("digits_pressed"),
@@ -681,6 +756,7 @@ def run_workflow_for_call(
         client = None
     ctx = CallContext({
         "call_id": call_id,
+        "tenant_id": tenant_id,
         "from": from_,
         "to": called,
         "digits_pressed": None,
