@@ -57,9 +57,9 @@ export async function mountVoiceLabScreen(root) {
     label: 'Sample text (max 500 chars)',
     value: _state.text,
   });
-  text.textarea.rows = 4;
-  text.textarea.maxLength = 500;
-  text.textarea.addEventListener('input', e => { _state.text = e.target.value; });
+  text.input.rows = 4;
+  text.input.maxLength = 500;
+  text.input.addEventListener('input', e => { _state.text = e.target.value; });
   body.append(text);
 
   body.append(h('div', { style: 'display: flex; gap: var(--space-2); align-items: center;' },

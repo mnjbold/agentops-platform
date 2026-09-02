@@ -152,12 +152,15 @@ def network_quality_summary(
     request: Request,
     from_: Optional[str] = None,
     to: Optional[str] = None,
+    call_id: Optional[str] = None,
 ) -> dict:
     """Rollup for the network quality dashboard hero card."""
     tenant_id = _tenant_id(request)
     _validate_window(from_, to)
     store = get_store()
-    summary = store.aggregate_network_quality(tenant_id, from_ts=from_, to_ts=to)
+    summary = store.aggregate_network_quality(
+        tenant_id, from_ts=from_, to_ts=to, call_id=call_id,
+    )
     summary["label"] = score_label(summary.get("avg_score"))
     return {"tenant_id": tenant_id, **summary, "from": from_, "to": to}
 

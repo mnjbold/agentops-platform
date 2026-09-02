@@ -147,8 +147,8 @@ function showEditor(root) {
   body.append(name);
 
   const sp = createTextarea({ label: 'System prompt', value: ed.system_prompt || '' });
-  sp.textarea.rows = 5;
-  sp.textarea.addEventListener('input', e => ed.system_prompt = e.target.value);
+  sp.input.rows = 5;
+  sp.input.addEventListener('input', e => ed.system_prompt = e.target.value);
   body.append(sp);
 
   const voice = createSelect({

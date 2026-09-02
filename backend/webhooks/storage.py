@@ -40,6 +40,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
 import secrets
 import sqlite3
 import threading
@@ -2773,46 +2774,6 @@ class Store:
                 return {"id": c["id"], "name": c.get("name", "")}
         return None
 
-    def upsert_phone_number(
-        self, tenant_id: str, phone: str, telnyx_id: Optional[str] = None,
-        country_code: Optional[str] = None, whatsapp_enabled: bool = False,
-    ) -> dict:
-        now = _utcnow()
-        existing = self._row(
-            "SELECT * FROM phone_numbers WHERE tenant_id = ? AND phone = ?",
-            (tenant_id, phone),
-        )
-        if existing:
-            updates = []
-            params: list = []
-            if telnyx_id is not None:
-                updates.append("telnyx_id = ?")
-                params.append(telnyx_id)
-            if country_code is not None:
-                updates.append("country_code = ?")
-                params.append(country_code)
-            if updates:
-                params.extend([tenant_id, phone])
-                self._exec(
-                    f"UPDATE phone_numbers SET {', '.join(updates)} "
-                    f"WHERE tenant_id = ? AND phone = ?",
-                    tuple(params),
-                )
-            return self._row(
-                "SELECT * FROM phone_numbers WHERE tenant_id = ? AND phone = ?",
-                (tenant_id, phone),
-            ) or {}
-        nid = _new_id("pn")
-        self._exec(
-            "INSERT INTO phone_numbers(id, tenant_id, phone, telnyx_id, country_code, "
-            "whatsapp_enabled, created_at) VALUES (?,?,?,?,?,?,?)",
-            (nid, tenant_id, phone, telnyx_id, country_code,
-             1 if whatsapp_enabled else 0, now),
-        )
-        return {"id": nid, "tenant_id": tenant_id, "phone": phone,
-                "telnyx_id": telnyx_id, "country_code": country_code,
-                "whatsapp_enabled": 1 if whatsapp_enabled else 0, "created_at": now}
-
     def create_contact(
         self, tenant_id: str, name: str, phone: str,
         email: Optional[str] = None, tags: Optional[list] = None,
@@ -2999,12 +2960,22 @@ class Store:
             ("active", now, tenant_id, meeting_id),
         )
 
-    def update_meeting_ended(self, tenant_id: str, meeting_id: str) -> None:
+    def update_meeting_ended(
+        self, tenant_id: str, meeting_id: str
+    ) -> Optional[dict]:
+        """Mark a meeting ended and return the updated row.
+
+        ``COALESCE`` pins ``ended_at`` to the first end: two concurrent
+        /end requests can both pass the caller's "already ended?" guard,
+        and the second must not move the timestamp.
+        """
         now = _utcnow()
         self._exec(
-            "UPDATE meetings SET status=?, ended_at=? WHERE tenant_id=? AND id=?",
+            "UPDATE meetings SET status=?, ended_at=COALESCE(ended_at, ?) "
+            "WHERE tenant_id=? AND id=?",
             ("ended", now, tenant_id, meeting_id),
         )
+        return self.get_meeting(tenant_id, meeting_id)
 
     def update_meeting_recording(self, tenant_id: str, meeting_id: str, url: str) -> None:
         self._exec(
@@ -3059,9 +3030,12 @@ class Store:
     def insert_network_quality(
         self, tenant_id: str, call_id: Optional[str],
         rtt_ms: float, jitter_ms: float, packet_loss_pct: float, score: float,
+        timestamp: Optional[str] = None,
     ) -> dict:
         nid = _new_id("nq")
-        now = _utcnow()
+        # The caller may supply the sample's own timestamp (the browser
+        # batches getStats() samples, so write time != sample time).
+        now = timestamp or _utcnow()
         self._exec(
             "INSERT INTO network_quality_log(id, tenant_id, call_id, rtt_ms, jitter_ms, "
             "packet_loss_pct, score, timestamp) VALUES (?,?,?,?,?,?,?,?)",
@@ -3071,10 +3045,11 @@ class Store:
                 "rtt_ms": rtt_ms, "jitter_ms": jitter_ms, "packet_loss_pct": packet_loss_pct,
                 "score": score, "timestamp": now}
 
-    def list_network_quality(
-        self, tenant_id: str, from_ts: Optional[str] = None,
-        to_ts: Optional[str] = None, limit: int = 200,
-    ) -> list[dict]:
+    def _nq_filter(
+        self, tenant_id: str, from_ts: Optional[str],
+        to_ts: Optional[str], call_id: Optional[str],
+    ) -> tuple[str, list]:
+        """Shared WHERE clause for the network_quality_log readers."""
         where = ["tenant_id = ?"]
         params: list = [tenant_id]
         if from_ts:
@@ -3083,12 +3058,58 @@ class Store:
         if to_ts:
             where.append("timestamp <= ?")
             params.append(to_ts)
+        if call_id:
+            where.append("call_id = ?")
+            params.append(call_id)
+        return " AND ".join(where), params
+
+    def list_network_quality(
+        self, tenant_id: str, from_ts: Optional[str] = None,
+        to_ts: Optional[str] = None, call_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        clause, params = self._nq_filter(tenant_id, from_ts, to_ts, call_id)
         params.append(limit)
         return self._rows(
-            f"SELECT * FROM network_quality_log WHERE {' AND '.join(where)} "
+            f"SELECT * FROM network_quality_log WHERE {clause} "
             f"ORDER BY timestamp DESC LIMIT ?",
             tuple(params),
         )
+
+    def aggregate_network_quality(
+        self, tenant_id: str, from_ts: Optional[str] = None,
+        to_ts: Optional[str] = None, call_id: Optional[str] = None,
+    ) -> dict:
+        """Rollup for the network-quality hero card.
+
+        Returns zeroed counters (not None) when the window is empty so the
+        dashboard can render without a null check.
+        """
+        clause, params = self._nq_filter(tenant_id, from_ts, to_ts, call_id)
+        row = self._row(
+            "SELECT COUNT(*) AS samples, AVG(score) AS avg_score, "
+            "MIN(score) AS min_score, MAX(score) AS max_score, "
+            "AVG(rtt_ms) AS avg_rtt_ms, AVG(jitter_ms) AS avg_jitter_ms, "
+            "AVG(packet_loss_pct) AS avg_packet_loss_pct "
+            f"FROM network_quality_log WHERE {clause}",
+            tuple(params),
+        ) or {}
+        samples = int(row.get("samples") or 0)
+
+        def _round(key: str) -> Optional[float]:
+            v = row.get(key)
+            return round(float(v), 2) if v is not None else None
+
+        return {
+            "samples": samples,
+            "avg_score": _round("avg_score"),
+            "min_score": _round("min_score"),
+            "max_score": _round("max_score"),
+            "avg_rtt_ms": _round("avg_rtt_ms"),
+            "avg_jitter_ms": _round("avg_jitter_ms"),
+            "avg_packet_loss_pct": _round("avg_packet_loss_pct"),
+            "call_id": call_id,
+        }
 
     def network_quality_summary(self, tenant_id: str) -> dict:
         row = self._row(
@@ -3806,15 +3827,48 @@ _store: Optional[Store] = None
 _store_lock = threading.Lock()
 
 
+def _resolve_db_path() -> Path:
+    """Region-aware SQLite path: US -> agentops.db, EU -> agentops_eu.db.
+
+    Read lazily (not at import time) so a process that sets BACKEND_REGION
+    after this module is imported still lands on the right file. An explicit
+    ``AGENTOPS_DB_PATH`` overrides the region mapping entirely.
+    """
+    override = (os.environ.get("AGENTOPS_DB_PATH") or "").strip()
+    if override:
+        return Path(override)
+    region = (os.environ.get("BACKEND_REGION") or "").strip().lower()
+    if region == "eu":
+        return _HERE / "agentops_eu.db"
+    return DEFAULT_DB_PATH
+
+
 def get_store() -> Store:
     """Lazy singleton, initialised on first access."""
     global _store
     if _store is None:
         with _store_lock:
             if _store is None:
-                _store = Store(DEFAULT_DB_PATH)
+                _store = Store(_resolve_db_path())
                 _store.init()
     return _store
+
+
+def reset_store_for_region() -> Store:
+    """Close and re-open the singleton against the current region's DB file.
+
+    Called from ``webhooks.regions.apply_region_routing()`` at startup, after
+    BACKEND_REGION has been read.
+    """
+    global _store
+    with _store_lock:
+        old, _store = _store, None
+        if old is not None:
+            try:
+                old.close()
+            except Exception as e:  # pragma: no cover - best-effort close
+                log.debug("reset_store_for_region: close failed: %s", e)
+    return get_store()
 
 
 def _safe_json_list(raw: Any) -> list:

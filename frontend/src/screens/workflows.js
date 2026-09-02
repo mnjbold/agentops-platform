@@ -321,9 +321,9 @@ function renderTimeline(history) {
     h('p', { style: 'color: var(--color-fg-3); font-size: var(--text-sm);' },
       'Synthetic call walked the graph. Each step is a node transition.'),
     h('ol', { style: 'padding-left: 20px;' },
-      ...history.map(h => h('li', {},
-        h('strong', {}, h.node_id),
-        h('span', { style: 'color: var(--color-fg-3);' }, ' — ' + h.action)
+      ...history.map(step => h('li', {},
+        h('strong', {}, step.node_id),
+        h('span', { style: 'color: var(--color-fg-3);' }, ' — ' + step.action)
       ))
     )
   );
@@ -550,7 +550,7 @@ function renderNodeProps(root, node) {
   switch (node.type) {
     case 'greeting': {
       const t = createTextarea({ label: 'Greeting text', value: params.text || '' });
-      t.textarea.addEventListener('input', (e) => { params.text = e.target.value; });
+      t.input.addEventListener('input', (e) => { params.text = e.target.value; });
       root.append(t);
       const v = createInput({ label: 'Voice', value: params.voice || '' });
       v.input.addEventListener('input', (e) => { params.voice = e.target.value; });
