@@ -1,0 +1,10 @@
+# Normalise line endings so a Windows editor touching a file doesn't produce a
+# whole-file diff (backend/webhooks/storage.py showed 3850+/3850- with zero
+# content change before this existed).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.mp3 binary
+*.db  binary

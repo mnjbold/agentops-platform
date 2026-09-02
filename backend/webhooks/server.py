@@ -402,6 +402,18 @@ async def _require_signed_body(request: Request) -> bytes:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
+# Router groups that failed to import are recorded here and surfaced on
+# /health. Before this, a broken module removed an entire feature group from
+# the API while the process still reported healthy — Phase D infra (DNS,
+# regions, branding) was missing from production this way.
+FAILED_ROUTER_GROUPS: dict[str, str] = {}
+
+
+def _record_mount_failure(group: str, exc: BaseException) -> None:
+    FAILED_ROUTER_GROUPS[group] = f"{type(exc).__name__}: {exc}"
+    log.error("Router group %r NOT mounted: %s", group, exc)
+
+
 # Mount the dispatcher + specialist-switch webhook routes
 app.include_router(dispatch_router)
 
@@ -446,7 +458,7 @@ try:
     app.include_router(suppression_router)
     app.include_router(sms_scheduler_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase C outbound routers not mounted: %s", _exc)
+    _record_mount_failure("phase_c_outbound", _exc)
 
 # Phase E-A — live-agent presence (#31) + call queue (#32). The
 # queue router is loaded lazily so issue #31's commit can ship
@@ -456,7 +468,7 @@ try:
     from webhooks.queue import router as queue_router
     app.include_router(queue_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase E queue router not mounted yet: %s", _exc)
+    _record_mount_failure("phase_e_queue", _exc)
 
 # Phase E-B #40 — skill routing admin. Mounted alongside queue so the
 # editor's skill dropdown and the dashboard's chips can fetch /api/skills
@@ -465,7 +477,7 @@ try:
     from webhooks.skills import router as skills_router
     app.include_router(skills_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase E-B skills router not mounted: %s", _exc)
+    _record_mount_failure("phase_eb_skills", _exc)
 
 # Phase E-B #41-#43 — supervisor monitor / whisper / barge. The
 # router exposes three POST endpoints (one per mode) plus a GET for
@@ -475,7 +487,7 @@ try:
     from webhooks.supervisor import router as supervisor_router
     app.include_router(supervisor_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase E-B supervisor router not mounted: %s", _exc)
+    _record_mount_failure("phase_eb_supervisor", _exc)
 
 # Phase D #26 + #27 — Meetings (Daily.co) + Email (provider-agnostic).
 try:
@@ -484,20 +496,18 @@ try:
     app.include_router(meetings_router)
     app.include_router(email_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase D adjacent routers not mounted: %s", _exc)
+    _record_mount_failure("phase_d_adjacent", _exc)
 
 # Phase D #28 + #29 + #30 — DNS, network quality, regions, branding.
 try:
     from webhooks.dns_api import router as dns_router
-    from webhooks.network_quality import router as network_quality_router
     from webhooks.regions_api import router as regions_router
     from webhooks.branding_api import router as branding_router
     app.include_router(dns_router)
-    app.include_router(network_quality_router)
     app.include_router(regions_router)
     app.include_router(branding_router)
 except Exception as _exc:  # pragma: no cover
-    log.warning("Phase D infra routers not mounted: %s", _exc)
+    _record_mount_failure("phase_d_infra", _exc)
 
 
 # ──────────────────── audit middleware (#20) ──────────────────────────────
@@ -596,7 +606,7 @@ def _migrate_legacy_env_to_secrets() -> None:
             user = store.get_user("default", "admin@default.local")
             if user:
                 if _reset_user_password(tenant_id="default", email="admin@default.local", new_password=dev_pwd):
-                    log.warning(_BACKEND_DEV_PASSWORD_LOG, dev_pwd)
+                    log.warning(_BACKEND_DEV_PASSWORD_LOG, "admin@default.local")
             else:
                 # No admin user yet — fall back to the original seed path.
                 import secrets as _s
@@ -607,7 +617,7 @@ def _migrate_legacy_env_to_secrets() -> None:
                     password=pwd,
                     role="admin",
                 )
-                log.warning(_BACKEND_DEV_PASSWORD_LOG, pwd)
+                log.warning(_BACKEND_DEV_PASSWORD_LOG, "admin@default.local")
         except Exception as e:
             log.warning("BACKEND_DEV_PASSWORD reset failed (non-fatal): %s", e)
 
@@ -634,10 +644,16 @@ def add_routing(phone: str, assistant_id: str) -> None:
 
 @app.get("/health")
 def health() -> dict:
+    """Liveness + router-mount integrity.
+
+    ``ok`` is False when any router group failed to import, so a broken
+    module surfaces at deploy time instead of silently deleting endpoints.
+    """
     return {
-        "ok": True,
+        "ok": not FAILED_ROUTER_GROUPS,
         "service": "w3j-telephony-webhooks",
         "routing_count": len(_routing),
+        "failed_router_groups": FAILED_ROUTER_GROUPS,
     }
 
 

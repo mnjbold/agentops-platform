@@ -138,13 +138,17 @@ def create_initial_user(tenant_id: str, email: str, password: str, role: str = "
     return user
 
 
+# NB: never interpolate the password itself. Application logs are shipped to
+# aggregators and retained far more widely than the database, so printing it
+# here hands the admin account to anyone with log access. The operator already
+# knows the value — they set the env var.
 _BACKEND_DEV_PASSWORD_LOG = (
     "=================================================================\n"
-    "  ADMIN PASSWORD from BACKEND_DEV_PASSWORD env:\n"
+    "  ADMIN PASSWORD RESET from BACKEND_DEV_PASSWORD env:\n"
     "    email:    %s\n"
-    "    password: %s\n"
-    "  The env var is set — password was reset on this boot. To disable,\n"
-    "  unset BACKEND_DEV_PASSWORD and redeploy.\n"
+    "    password: (not logged — it is the value of BACKEND_DEV_PASSWORD)\n"
+    "  The env var is set, so the password is reset on EVERY boot; this\n"
+    "  silently reverts any manual rotation. Unset it and redeploy to stop.\n"
     "================================================================="
 )
 

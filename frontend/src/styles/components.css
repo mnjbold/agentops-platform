@@ -311,6 +311,7 @@
 .avatar-size-48 { width: 48px; height: 48px; font-size: var(--text-md); }
 .avatar-size-64 { width: 64px; height: 64px; font-size: var(--text-lg); }
 .avatar-size-80 { width: 80px; height: 80px; font-size: var(--text-xl); }
+.avatar-size-96 { width: 96px; height: 96px; font-size: var(--text-2xl); }
 .avatar-img { width: 100%; height: 100%; object-fit: cover; }
 .avatar-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 .avatar-initials { letter-spacing: 0.02em; }

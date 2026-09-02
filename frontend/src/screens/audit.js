@@ -64,7 +64,7 @@ function filterInput(label, type, value, onChange) {
   return h('div', {}, h('div', { style: 'color: var(--color-fg-3); font-size: 11px; margin-bottom: 2px;' }, label), i);
 }
 
-const debouncedLoad = (root) => debounce(() => load(root), 250);
+const debouncedLoad = debounce((root) => load(root), 250);
 
 async function load(root) {
   _state.loading = true;

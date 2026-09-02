@@ -57,3 +57,39 @@ Thumbs.db
 
 # ---- temp worktrees ----
 .worktrees/
+
+# ---- local runtime secrets / dev logs (NEVER commit) ----
+# The `secrets/` rule above does not match these leading-dot directories.
+# .runtime-secrets/ holds live Telnyx + Fernet + webhook-HMAC values.
+.runtime-secrets/
+.dev-logs/
+
+# ---- scratch scripts & probes ----
+# Explicit patterns, NOT `_*.py` — that would also swallow __init__.py.
+_dbg*.py
+_check_*.py
+_mountcheck*.py
+_routes_*.py
+_health_check.py
+*.tmp
+*.bak
+backend/_audit_tmp/
+
+# ---- captured test / build output ----
+*_test*.txt
+*_tests.txt
+phase_d_*.txt
+_e_b_*.txt
+_skills_test.txt
+_sup_test*.txt
+fail_check.txt
+dbg.txt
+debug_out.txt
+routes.txt
+
+# ---- PR / review scratch ----
+.COMMENT_*.md
+.PR_BODY.md
+
+# Locally generated dev admin password (see scripts/dev.ps1)
+.dev-password

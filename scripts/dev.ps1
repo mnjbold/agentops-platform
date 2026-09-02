@@ -70,7 +70,20 @@ function Start-Backend {
     # honors BACKEND_DEV_PASSWORD; if unset, it generates a random one
     # and prints it to the log. We set it here so the dev loop is
     # predictable.)
-    $env:BACKEND_DEV_PASSWORD = if ($env:BACKEND_DEV_PASSWORD) { $env:BACKEND_DEV_PASSWORD } else { 'dev123!' }
+    if (-not $env:BACKEND_DEV_PASSWORD) {
+        # Never hardcode a password here: this file is tracked in a PUBLIC repo.
+        # Generate once, cache in a gitignored file so the dev loop stays stable.
+        $devPwdFile = Join-Path $RepoRoot '.dev-password'
+        if (Test-Path $devPwdFile) {
+            $env:BACKEND_DEV_PASSWORD = (Get-Content $devPwdFile -Raw).Trim()
+        } else {
+            $bytes = New-Object byte[] 18
+            [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+            $env:BACKEND_DEV_PASSWORD = [Convert]::ToBase64String($bytes)
+            Set-Content -Path $devPwdFile -Value $env:BACKEND_DEV_PASSWORD -NoNewline
+            Write-Host "  generated a new dev password -> $devPwdFile" -ForegroundColor Yellow
+        }
+    }
     $env:PYTHONUNBUFFERED = '1'
 
     # If the default admin user already exists (from a previous run with
@@ -83,7 +96,7 @@ function Start-Backend {
     @'
 import os, sqlite3, bcrypt
 db = r"C:/Users/W3jde/local-projects/w3j-projects/telnyx/agentops-platform/backend/webhooks/agentops.db"
-new_pwd = os.environ.get("BACKEND_DEV_PASSWORD", "dev123!").encode("utf-8")
+new_pwd = os.environ["BACKEND_DEV_PASSWORD"].encode("utf-8")  # no hardcoded default
 try:
     con = sqlite3.connect(db)
     cur = con.execute(
@@ -173,7 +186,7 @@ Write-Host "  repo: $RepoRoot"
 Write-Host ""
 Write-Host "  Login at http://localhost:5173  with:" -ForegroundColor Green
 Write-Host "    email:    admin@default.local" -ForegroundColor Green
-Write-Host "    password: dev123!   (BACKEND_DEV_PASSWORD; change in scripts\dev.ps1)" -ForegroundColor Green
+Write-Host "    password: $env:BACKEND_DEV_PASSWORD" -ForegroundColor Green
 Write-Host ""
 
 if ($startBackend) { Start-Backend }
